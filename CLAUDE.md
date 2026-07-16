@@ -144,3 +144,8 @@ Per-step rewards:
 - `smoke_test.py`: Validates environment with scripted policy (straight toward target)
 - `show_random_policy.py`: Visualizes random policy behavior
 - `render_eval10_concat.py`: Generates evaluation videos from trained models
+
+## Response & Style Guidelines
+
+- **Always provide full absolute paths** for all files mentioned in responses to the user (例如: `[/home/diana/盲人寻路/...](file:///home/diana/盲人寻路/...)`).
+- **Whenever a video is generated or requested to be displayed**, automatically run `mpv` locally to play the video file immediately.
