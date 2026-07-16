@@ -774,30 +774,27 @@ def run_pipeline():
                 init_c_mb = initial_lstm_state_c[:, m_env_indices]
                 
                 optimizer.zero_grad(set_to_none=True)
-                with torch.amp.autocast("cuda", dtype=torch.float16):
-                    _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(
-                        obs_mb, 
-                        (init_h_mb, init_c_mb), 
-                        dones_mb, 
-                        actions_mb.view(-1, 3)
-                    )
-                    
-                    logratio = newlogprob - logprobs_mb
-                    ratio = logratio.exp()
-                    
-                    pg_loss1 = -advantages_mb * ratio
-                    pg_loss2 = -advantages_mb * torch.clamp(ratio, 0.8, 1.2)
-                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-                    v_loss = 0.5 * ((newvalue.squeeze() - returns_mb) ** 2).mean()
-                    entropy_loss = entropy.mean()
-                    
-                    loss = pg_loss - CONFIG["ent_coef"] * entropy_loss + CONFIG["vf_coef"] * v_loss
+                _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(
+                    obs_mb, 
+                    (init_h_mb, init_c_mb), 
+                    dones_mb, 
+                    actions_mb.view(-1, 3)
+                )
                 
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
+                logratio = newlogprob - logprobs_mb
+                ratio = logratio.exp()
+                
+                pg_loss1 = -advantages_mb * ratio
+                pg_loss2 = -advantages_mb * torch.clamp(ratio, 0.8, 1.2)
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                v_loss = 0.5 * ((newvalue.squeeze() - returns_mb) ** 2).mean()
+                entropy_loss = entropy.mean()
+                
+                loss = pg_loss - CONFIG["ent_coef"] * entropy_loss + CONFIG["vf_coef"] * v_loss
+                
+                loss.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), CONFIG["max_grad_norm"])
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 
         # 每 1 迭代输出 (每轮更新都进行打印，方便实时观察吞吐与速度)
         if update_iter % 1 == 0 or episodes_finished >= total_episodes:
