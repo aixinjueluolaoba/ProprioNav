@@ -79,6 +79,12 @@ class GPUBlindNavEnvV11b:
         self.macro_recovery_total_steps = torch.zeros(self.num_envs, dtype=torch.int32, device=device)
         self.macro_anchor_heading = torch.zeros(self.num_envs, dtype=torch.float32, device=device)
         
+        # 预计算几何缓存张量以消除每步运行时 torch.roll 与减法开销
+        self.mountain_vertices_roll = torch.zeros((self.num_envs, self.mountain_count, 8, 2), dtype=torch.float32, device=device)
+        self.mountain_edges = torch.zeros((self.num_envs, self.mountain_count, 8, 2), dtype=torch.float32, device=device)
+        self.mountain_edge_dx = torch.zeros((self.num_envs, self.mountain_count, 8), dtype=torch.float32, device=device)
+        self.mountain_edge_dy = torch.zeros((self.num_envs, self.mountain_count, 8), dtype=torch.float32, device=device)
+        
         self.ANGLE_OFFSETS = torch.tensor([-1.0, -0.33333334, 0.0, 0.33333334, 1.0], device=device)
         self.MACRO_DURATIONS = torch.tensor([0, 2, 4, 4, 6, 6, 4, 3], dtype=torch.int32, device=device)
         
@@ -138,6 +144,13 @@ class GPUBlindNavEnvV11b:
         self.tree_centers[env_indices] = t_centers
         self.mountain_centers[env_indices] = m_centers
         self.mountain_vertices[env_indices] = m_vertices
+        
+        # 写入预计算好的偏移与边差值缓存
+        m_vertices_roll = torch.roll(m_vertices, shifts=-1, dims=2)
+        self.mountain_vertices_roll[env_indices] = m_vertices_roll
+        self.mountain_edges[env_indices] = m_vertices_roll - m_vertices
+        self.mountain_edge_dx[env_indices] = m_vertices_roll[..., 0] - m_vertices[..., 0]
+        self.mountain_edge_dy[env_indices] = m_vertices_roll[..., 1] - m_vertices[..., 1]
 
     def reset(self, seed=None):
         if seed is not None:
@@ -303,24 +316,26 @@ class GPUBlindNavEnvV11b:
         # 山体碰撞
         P_cand = candidate.unsqueeze(1).unsqueeze(2)
         C = self.mountain_vertices
-        D = torch.roll(self.mountain_vertices, shifts=-1, dims=2)
+        D = self.mountain_vertices_roll
         c_x, c_y = C[..., 0], C[..., 1]
-        d_x, d_y = D[..., 0], D[..., 1]
         p_x, p_y = P_cand[..., 0], P_cand[..., 1]
         
-        cond1 = (c_y > p_y) != (d_y > p_y)
-        denom = d_y - c_y
+        cond1 = (c_y > p_y) != (D[..., 1] > p_y)
+        denom = self.mountain_edge_dy
         denom = torch.where(denom.abs() < 1e-6, torch.sign(denom) * 1e-6, denom)
-        x_intersect = (d_x - c_x) * (p_y - c_y) / denom + c_x
+        x_intersect = self.mountain_edge_dx * (p_y - c_y) / denom + c_x
         ray_cross = cond1 & (p_x < x_intersect)
         inside = (ray_cross.sum(dim=2) % 2 == 1)
         
         A_seg = self.pos.unsqueeze(1).unsqueeze(2)
         B_seg = candidate.unsqueeze(1).unsqueeze(2)
-        cp1 = (B_seg[..., 0] - A_seg[..., 0]) * (C[..., 1] - A_seg[..., 1]) - (B_seg[..., 1] - A_seg[..., 1]) * (C[..., 0] - A_seg[..., 0])
-        cp2 = (B_seg[..., 0] - A_seg[..., 0]) * (D[..., 1] - A_seg[..., 1]) - (B_seg[..., 1] - A_seg[..., 1]) * (D[..., 0] - A_seg[..., 0])
-        cp3 = (D[..., 0] - C[..., 0]) * (A_seg[..., 1] - C[..., 1]) - (D[..., 1] - C[..., 1]) * (A_seg[..., 0] - C[..., 0])
-        cp4 = (D[..., 0] - C[..., 0]) * (B_seg[..., 1] - C[..., 1]) - (D[..., 1] - C[..., 1]) * (B_seg[..., 0] - C[..., 0])
+        d_x_intended = intended_delta[:, 0].unsqueeze(1).unsqueeze(2)
+        d_y_intended = intended_delta[:, 1].unsqueeze(1).unsqueeze(2)
+        
+        cp1 = d_x_intended * (C[..., 1] - A_seg[..., 1]) - d_y_intended * (C[..., 0] - A_seg[..., 0])
+        cp2 = d_x_intended * (D[..., 1] - A_seg[..., 1]) - d_y_intended * (D[..., 0] - A_seg[..., 0])
+        cp3 = self.mountain_edge_dx * (A_seg[..., 1] - C[..., 1]) - self.mountain_edge_dy * (A_seg[..., 0] - C[..., 0])
+        cp4 = self.mountain_edge_dx * (B_seg[..., 1] - C[..., 1]) - self.mountain_edge_dy * (B_seg[..., 0] - C[..., 0])
         edge_hit = (cp1 * cp2 < 0.0) & (cp3 * cp4 < 0.0)
         mountain_hit = edge_hit.any(dim=2)
         
@@ -342,7 +357,7 @@ class GPUBlindNavEnvV11b:
         resolved_tree = self.pos + slide_t
         
         P_close = candidate.unsqueeze(1).unsqueeze(2)
-        segment_m = D - C
+        segment_m = self.mountain_edges
         length_sq_m = (segment_m ** 2).sum(dim=3)
         t_m = ((P_close - C) * segment_m).sum(dim=3) / torch.clamp(length_sq_m, min=1e-6)
         t_m = torch.clamp(t_m, 0.0, 1.0)
@@ -354,8 +369,7 @@ class GPUBlindNavEnvV11b:
         e_idx = min_idx % 8
         
         C_close = self.mountain_vertices[torch.arange(self.num_envs), m_idx, e_idx]
-        D_close = self.mountain_vertices[torch.arange(self.num_envs), m_idx, (e_idx + 1) % 8]
-        edge_vec = D_close - C_close
+        edge_vec = self.mountain_edges[torch.arange(self.num_envs), m_idx, e_idx]
         tangent_m = edge_vec / torch.norm(edge_vec, dim=1, keepdim=True).clamp(min=1e-6)
         dot_m = tangent_m[:, 0] * intended_delta[:, 0] + tangent_m[:, 1] * intended_delta[:, 1]
         slide_m = tangent_m * torch.sign(dot_m).unsqueeze(1) * torch.norm(intended_delta, dim=1, keepdim=True) * 0.38
@@ -668,6 +682,7 @@ def run_pipeline():
     success_rate_smooth = 0.0
     reward_smooth = 0.0
     
+    scaler = torch.amp.GradScaler("cuda")
     start_time = time.time()
     update_iter = 0
     
@@ -684,16 +699,17 @@ def run_pipeline():
             dones_batch[step] = next_done
             
             with torch.no_grad():
-                action, logprob, _, value, next_lstm_state = agent.get_action_and_value(
-                    next_obs.unsqueeze(0), 
-                    (next_lstm_state_h, next_lstm_state_c), 
-                    next_done.unsqueeze(0)
-                )
-                values_batch[step] = value.squeeze()
+                with torch.amp.autocast("cuda", dtype=torch.float16):
+                    action, logprob, _, value, next_lstm_state = agent.get_action_and_value(
+                        next_obs.unsqueeze(0), 
+                        (next_lstm_state_h, next_lstm_state_c), 
+                        next_done.unsqueeze(0)
+                    )
+                values_batch[step] = value.squeeze().float()
                 next_lstm_state_h, next_lstm_state_c = next_lstm_state
                 
             actions_batch[step] = action
-            logprobs_batch[step] = logprob
+            logprobs_batch[step] = logprob.float()
             
             next_obs, reward, done, reached = env.step(action)
             rewards_batch[step] = reward
@@ -758,28 +774,31 @@ def run_pipeline():
                 init_h_mb = initial_lstm_state_h[:, m_env_indices]
                 init_c_mb = initial_lstm_state_c[:, m_env_indices]
                 
-                _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(
-                    obs_mb, 
-                    (init_h_mb, init_c_mb), 
-                    dones_mb, 
-                    actions_mb.view(-1, 3)
-                )
+                optimizer.zero_grad(set_to_none=True)
+                with torch.amp.autocast("cuda", dtype=torch.float16):
+                    _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(
+                        obs_mb, 
+                        (init_h_mb, init_c_mb), 
+                        dones_mb, 
+                        actions_mb.view(-1, 3)
+                    )
+                    
+                    logratio = newlogprob - logprobs_mb
+                    ratio = logratio.exp()
+                    
+                    pg_loss1 = -advantages_mb * ratio
+                    pg_loss2 = -advantages_mb * torch.clamp(ratio, 0.8, 1.2)
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                    v_loss = 0.5 * ((newvalue.squeeze() - returns_mb) ** 2).mean()
+                    entropy_loss = entropy.mean()
+                    
+                    loss = pg_loss - CONFIG["ent_coef"] * entropy_loss + CONFIG["vf_coef"] * v_loss
                 
-                logratio = newlogprob - logprobs_mb
-                ratio = logratio.exp()
-                
-                pg_loss1 = -advantages_mb * ratio
-                pg_loss2 = -advantages_mb * torch.clamp(ratio, 1.0 - clip_coef, 1.0 + clip_coef) if 'clip_coef' in locals() else -advantages_mb * torch.clamp(ratio, 0.8, 1.2)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-                v_loss = 0.5 * ((newvalue.squeeze() - returns_mb) ** 2).mean()
-                entropy_loss = entropy.mean()
-                
-                loss = pg_loss - CONFIG["ent_coef"] * entropy_loss + CONFIG["vf_coef"] * v_loss
-                
-                optimizer.zero_grad()
-                loss.backward()
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(agent.parameters(), CONFIG["max_grad_norm"])
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 
         # 每 5 迭代输出
         if update_iter % 5 == 0 or episodes_finished >= total_episodes:
