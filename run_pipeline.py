@@ -699,19 +699,16 @@ def run_pipeline():
             dones_batch[step] = next_done
             
             with torch.no_grad():
-                with torch.amp.autocast("cuda", dtype=torch.float16):
-                    action, logprob, _, value, next_lstm_state = agent.get_action_and_value(
-                        next_obs.unsqueeze(0), 
-                        (next_lstm_state_h, next_lstm_state_c), 
-                        next_done.unsqueeze(0)
-                    )
-                values_batch[step] = value.squeeze().float()
-                next_h, next_c = next_lstm_state
-                next_lstm_state_h = next_h.float()
-                next_lstm_state_c = next_c.float()
+                action, logprob, _, value, next_lstm_state = agent.get_action_and_value(
+                    next_obs.unsqueeze(0), 
+                    (next_lstm_state_h, next_lstm_state_c), 
+                    next_done.unsqueeze(0)
+                )
+                values_batch[step] = value.squeeze()
+                next_lstm_state_h, next_lstm_state_c = next_lstm_state
                 
             actions_batch[step] = action
-            logprobs_batch[step] = logprob.float()
+            logprobs_batch[step] = logprob
             
             next_obs, reward, done, reached = env.step(action)
             rewards_batch[step] = reward
