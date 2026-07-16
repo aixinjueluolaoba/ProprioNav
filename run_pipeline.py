@@ -14,8 +14,8 @@ import numpy as np
 # =====================================================================
 CONFIG = {
     # --- 强化学习训练参数 (GPU Vectorized) ---
-    "num_envs": 60000,           # 并行仿真环境数 (显存约占用 3.4GB，支持 Tesla V100)
-    "total_episodes": 100000,     # 训练总轮数 (达到该数量后停止)
+    "num_envs": 100000,           # 并行仿真环境数 (显存约占用 3.4GB，支持 Tesla V100)
+    "total_episodes": 100000000,     # 训练总轮数 (达到该数量后停止)
     "rollout_steps": 128,         # 每次收集的步数
     "minibatch_envs": 4096,       # PPO 梯度更新时的小批次环境数 (越大 GPU 饱和度越高)
     "ppo_epochs": 4,             # 每次收集后的更新 Epoch 树
@@ -388,7 +388,7 @@ class GPUBlindNavEnvV11b:
         )
         stuck = (self.stuck_time > 0.4) | (self.no_progress_time > 0.9)
         
-        target_unit = delta / torch.clamp(distance.unsqueeze(1), min=1e-6)
+        target_unit = (self.target - old_pos) / torch.clamp(self.prev_dist.unsqueeze(1), min=1e-6)
         forward_distance = (displacement_vec * target_unit).sum(dim=1)
         lateral_vec = displacement_vec - target_unit * forward_distance.unsqueeze(1)
         lateral_distance = torch.norm(lateral_vec, dim=1)
