@@ -627,7 +627,7 @@ def run_and_render_seed_worker(seed, index, weights_path, state_mode, fps, out_d
             
         # 4. 渲染当前单次 Episode 的 mp4 视频
         output_video = Path(out_dir) / f"eval_{index:02d}.mp4"
-        render_episode_video(env.base_env, path, total_reward, output_video, fps=fps, headings=headings)
+        render_episode_video(env.base_env, np.array(path), total_reward, output_video, fps=fps, headings=headings)
         
         dist = float(np.linalg.norm(env.base_env.target - path[-1]))
         is_success = dist <= env.base_env.target_radius
@@ -857,6 +857,7 @@ def run_pipeline():
     compressed_mp4 = out_dir / "eval10_concat_compressed.mp4"
     
     # 调用 render_eval10_concat 现有的拼接函数
+    from render_eval10_concat import concat_and_compress
     concat_and_compress(episode_videos, concat_mp4, compressed_mp4, fps=CONFIG["fps"])
     
     print("==================================================")
