@@ -706,7 +706,9 @@ def run_pipeline():
                         next_done.unsqueeze(0)
                     )
                 values_batch[step] = value.squeeze().float()
-                next_lstm_state_h, next_lstm_state_c = next_lstm_state
+                next_h, next_c = next_lstm_state
+                next_lstm_state_h = next_h.float()
+                next_lstm_state_c = next_c.float()
                 
             actions_batch[step] = action
             logprobs_batch[step] = logprob.float()
