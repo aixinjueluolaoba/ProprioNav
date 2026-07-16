@@ -1,0 +1,32 @@
+{
+  "observable12_target8_macro_library_v11_stage2a": {
+    "__wrapper__": {
+      "selective_no_progress_threshold": 0.95,
+      "selective_collision_threshold": 0.82,
+      "stuck_macro_explore_prob": 0.18,
+      "stuck_macro_no_progress_threshold": 0.42,
+      "stuck_macro_collision_threshold": 0.72,
+      "stuck_macro_choices": [1, 2, 3, 4, 5, 6]
+    }
+  },
+  "observable12_target8_macro_library_v11_stage2": {
+    "__wrapper__": {
+      "selective_no_progress_threshold": 0.95,
+      "selective_collision_threshold": 0.82,
+      "stuck_macro_explore_prob": 0.24,
+      "stuck_macro_no_progress_threshold": 0.42,
+      "stuck_macro_collision_threshold": 0.72,
+      "stuck_macro_choices": [1, 2, 3, 4, 5, 6]
+    }
+  },
+  "observable12_target8_macro_library_v11_stage3": {
+    "__wrapper__": {
+      "selective_no_progress_threshold": 0.92,
+      "selective_collision_threshold": 0.80,
+      "stuck_macro_explore_prob": 0.30,
+      "stuck_macro_no_progress_threshold": 0.40,
+      "stuck_macro_collision_threshold": 0.70,
+      "stuck_macro_choices": [1, 2, 3, 4, 5, 6]
+    }
+  }
+}

@@ -1,0 +1,3449 @@
+# blind_nav_rl Current Context Summary
+
+- Project: `/home/diana/fishing/blind_nav_rl`
+- Generated: `2026-05-25`
+- Source: `context-bridge` skill plus current project docs (`README.md`, `实验记录.md`, `HANDOFF_交接.md`) and previous compact handoff.
+
+## Current Mainline
+
+The current documented default candidate is `v11b stage2`, not the older continuous `t053` line.
+
+- Candidate: `rppo_medium_lstm128x2_observable12_target8_macro_library_v11_stage2`
+- State mode: `observable12_target8_macro_library_v11_stage2`
+- Action mode: `v11`
+- Env overrides: `configs/v11/方案B_卡住宏动作探索.json`
+- Main checkpoint:
+  `/home/diana/fishing/blind_nav_rl/runs/目标8宏动作库v11b卡住探索短训_v1002/rppo_medium_lstm128x2_observable12_target8_macro_library_v11_stage2/models/checkpoint_ep_01000.zip`
+- Archive:
+  `/home/diana/fishing/blind_nav_rl/runs/目标8宏动作库v11b当前最佳归档_v1002`
+- Preview:
+  `http://47.99.153.111:12346/file/%E7%9B%AE%E6%A0%878%E5%AE%8F%E5%8A%A8%E4%BD%9C%E5%BA%93v11b%E5%BD%93%E5%89%8D%E6%9C%80%E4%BD%B3%E6%88%90%E6%9E%9C/%E6%88%90%E6%9E%9C%E9%A2%84%E8%A7%88.html`
+
+## Why v11b Matters
+
+The old `v11` macro-library policy often looked like it was standing still. The recorded diagnosis says this was mostly repeated collision rollback, not a reward that directly taught idling.
+
+`v11b` adds controlled macro-action exploration when the policy outputs `macro_bin=0` while stuck/no-progress/collision signals are active. This made recovery usage non-zero and removed the long stuck runs in the fixed high-obstacle diagonal test.
+
+Key documented 20-episode fixed diagonal result:
+
+| Model | Success | Avg steps | Recovery rate | Avg collisions | Still rate | Max still run |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| old `v11 stage2` | `0.55` | `148.90` | `0.000` | `108.35` | `0.307` | `79.65` |
+| `v11b stage2` | `1.00` | `75.70` | `0.154` | `12.90` | `0.0386` | `2.45` |
+| `v11b stage3` | `1.00` | `82.65` | `0.195` | `14.30` | `0.0326` | `2.15` |
+
+Large-sample note from docs:
+
+- `v11b stage2` remains better than AE500 on success rate and steps.
+- It is not perfect: `still_step_rate` and `max_still_run` are still higher than AE500, so AE500 remains a useful reference for more aggressive recovery behavior.
+
+## User Preference
+
+The user cares most about low terminal angle error at the target. Full-trajectory angle error is useful only as a proxy for straighter paths and should not dominate selection if terminal behavior and success are good.
+
+The user asked to shorten iterations because training/eval was too slow. Prefer short gates first, then expand only after a candidate passes.
+
+## Older Continuous v6 Line
+
+Previous compact handoff said the old recommended model was:
+
+`runs/continuous_v6_s050_terminal_angle_interpolate/t053.zip`
+
+Known old-line metrics:
+
+- bad8: `8/8`
+- dense diagonal 100 seed `6300000`: `100/100`
+- random100 seed `1800000`: `99/100`
+- dense final angle: about `38.45 deg`
+- random score: about `89.25549`
+
+This line is now best treated as a historical rollback/reference, because current project docs promote `v11b stage2` as the default candidate.
+
+Do not promote later continuous interpolation candidates over `t053`; `d190`, `d200`, `f150`, and `f500` all failed at least one medium 50-episode gate.
+
+## Recent Failed/Not-Promoted Branches
+
+- `d190`: strong short-screen result, but old dense50 failed seed `6300037`.
+- `d200`: old dense50 failed `6300037`; new dense50 failed `6300129,6300141`.
+- `f150`: old dense50 failed `6300029`; new dense50 failed `6300131`.
+- `f500`: old dense50 failed `6300029`; new dense50 had multiple failures.
+- `eval_target8_hybrid_switch.py`: two-policy switch was tested but is not recommended as the main path; switches tended to happen too late or break good paths.
+
+## Current Follow-Up Branches In Docs
+
+These are documented probes around the `v11b` family:
+
+- `v11ds`: duration-only macro variant, adds short/medium/long duration bins.
+- `v11tm`: explicit trigger macro template branch.
+- `v11re`: reward/exit branch using `configs/v11/方案H_脱困退出与收角强化.json`.
+- `v11re` balanced/diagonal/bad-seed branches: follow-ups for long-tail diagonal stuck cases.
+- `v11re_bad_seed_mergeback`: trains bad seeds, then mixes back into normal `v11re`.
+
+Docs currently say `方案H` is the stronger `v11re` branch among the reward/exit variants, but not yet a replacement for default `v11b stage2`.
+
+## Latest v11rx Status
+
+The current `v11re` 3-head action line appears exhausted on the stubborn bad seed `6300069`. Multiple BC and short-RL attempts changed metrics, but not the behavior-level barrier.
+
+The first real behavior flip came from the `v11rx` branch, which adds macro id `7` (`short_wide_left_then_target`) in:
+
+- `benchmark_state_dims_10k.py`
+- `blind_nav_rl/env.py`
+- env overrides: `configs/v11/方案M_v11rx短左回正探针.json`
+
+Important checked results on `v1002`:
+
+- `v11rx_6300069_quick checkpoint_ep_00250`
+  - bad-seed eval: success `0.75`
+  - flips `6300069` from fail to success: `260/225 collisions -> 75/16`
+  - also improves `6300025` and `6300006`
+  - but regresses `6300058` and `6300031`
+- `v11rx_6300069_quick_bg checkpoint_ep_00500`
+  - bad-seed eval: success `0.75`
+  - fixes `6300058` and `6300031`
+  - but loses `6300069` again, and also loses `6300006`
+  - pressure20 gets much slower: `56.55` steps vs `34.45` at `00250` and `29.55` for `v11re` base
+- `v11rx_conflict4_micro checkpoint_ep_00250`
+  - resumed from `v11rx_6300069_quick checkpoint_ep_00250`
+  - seed pool narrowed to `6300069,6300058,6300031,6300006`
+  - bad-seed eval: success `0.75`
+  - keeps `6300069` solved and repairs `6300031`
+  - but still fails `6300058` and now fails `6300006`
+  - versus original `v11rx250`, bad-seed collisions drop sharply: `91.125 -> 39.0`
+  - normal20 stays usable: success `1.0`, avg steps `25.95`, avg collisions `3.95`
+  - pressure20 is acceptable on collisions but worse on angle/recovery aggressiveness:
+    - avg steps `39.3`
+    - avg collisions `7.8`
+    - avg_abs_angle_error_deg `34.98`
+    - avg_recovery_action_rate `0.406`
+- `v11rx_tail2_micro checkpoint_ep_00250`
+  - resumed from `v11rx_conflict4_micro checkpoint_ep_00250`
+  - seed pool narrowed again to `6300058,6300006`
+  - result is behavior-identical to `v11rx_conflict4_micro checkpoint_ep_00250`
+  - same bad-seed summary and same pressure20 summary
+  - interpretation: plain replay of the remaining two failures does not move the policy at all under the current `方案M` overrides
+- `v11rx_tail2_conservative_micro checkpoint_ep_00125` and `00250`
+  - resumed from `v11rx_conflict4_micro checkpoint_ep_00250`
+  - same tail seed pool `6300058,6300006`
+  - switched to `configs/v11/方案N_v11rx尾部抑激进探针.json`
+  - this does move the policy strongly:
+    - repairs `6300058` and `6300006`
+    - but breaks `6300069,6300031,6300057,6300067,6300089`
+  - bad-seed summary collapses to success `0.375`, avg collisions `140.625`
+  - pressure20 gets straighter and lower-recovery, but collisions jump badly:
+    - avg steps `38.15`
+    - avg_abs_angle_error_deg `12.33`
+    - avg_recovery_action_rate `0.0827`
+    - avg_collision_count `18.1`
+  - interpretation: `方案N` proves the tail failures are movable, but this conservative shift is too strong and destroys the rest of the hard-seed set
+- `v11rx_tail2_conservative_lite_micro`
+  - resumed from `v11rx_conflict4_micro checkpoint_ep_00250`
+  - same tail seed pool `6300058,6300006`
+  - switched to `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+  - `checkpoint_ep_00125` is the first genuinely promising `v11rx` tail follow-up:
+    - bad-seed success `0.875`
+    - keeps `6300058`, `6300006`, and `6300069` all solved
+    - only fails `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+    - normal20: success `1.0`, avg steps `26.45`, avg collisions `7.85`
+  - but `checkpoint_ep_00250` regresses back toward the old conflict4 pattern:
+    - bad-seed success `0.75`
+    - fails `6300058,6300006` again
+    - pressure20: avg steps `36.55`, avg collisions `7.8`
+    - normal20: success `1.0`, avg steps `24.8`, avg collisions `3.45`
+  - interpretation:
+    - `方案Nlite` creates a useful early checkpoint window
+    - the signal washes out if training continues to `250`
+- `v11rx_tail2_conservative_lite_125`
+  - standalone 125-episode run created to preserve the early-stop window as a first-class artifact
+  - formal re-eval matches the earlier `micro checkpoint_ep_00125` signal:
+    - bad-seed success `0.875`
+    - only failed seed: `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+    - normal20: success `1.0`, avg steps `26.45`, avg collisions `7.85`
+  - this is currently the strongest `v11rx` candidate artifact to compare against `v11re base`
+- `v11rx_nlite125_distill_mergeback`
+  - attempted BC merge-back using:
+    - resume model = `Nlite-125` itself
+    - base datasets = `v11re normal + pressure`
+    - specialist dataset = `Nlite-125` diagonal trajectories
+  - result is behavior-identical to the original `Nlite-125`
+  - interpretation:
+    - current BC recipe does not actually merge back toward a stronger base
+    - if continuing merge-back, the right base should be a stronger `v11rx` checkpoint such as `v11rx_conflict4_micro checkpoint_ep_00250`, while `Nlite-125` is kept only as the specialist teacher
+- `v11rx_conflict4_merge_nlite125`
+  - attempted BC merge-back from the stronger `v11rx` base:
+    - resume/base model = `v11rx_conflict4_micro checkpoint_ep_00250`
+    - base datasets = `v11re normal + pressure`
+    - specialist teacher/model = `Nlite-125`
+    - launcher: `tools/启动_v11rx_conflict4基座融合Nlite125_v1002.sh`
+  - checked result is still effectively behavior-identical to `Nlite-125`, not a preserved-base merge:
+    - bad-seed success `0.875`
+    - only failed seed: `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+    - normal20: success `1.0`, avg steps `26.45`, avg collisions `7.85`
+  - the bad-seed aggregate remains heavy and specialist-like rather than base-like:
+    - avg steps `161.125`
+    - avg collisions `90.75`
+    - avg_abs_angle_error_deg `22.92`
+    - avg_recovery_action_rate `0.2066`
+  - interpretation:
+    - simply swapping the resume/base model to `v11rx_conflict4_micro checkpoint_ep_00250` is still not enough
+    - the current offline BC recipe collapses toward the specialist behavior instead of preserving the stronger base
+- `v11rx_conflict4_merge_tail2specialist`
+  - same offline BC merge-back recipe, but specialist diagonal dataset restricted to only the unresolved tail seeds:
+    - specialist seed pool = `6300058,6300006`
+    - specialist dataset shrinks to `213` samples across `2` diagonal episodes
+    - launcher support added via `SPECIALIST_SEED_POOL` in:
+      - `tools/启动_v11rx_conflict4基座融合Nlite125_v1002.sh`
+  - checked result is still behavior-identical to the previous merge-back / `Nlite-125`-like solution:
+    - bad-seed success `0.875`
+    - only failed seed: `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+    - normal20 remains on the same prior merge-back line (`26.45` steps / `7.85` collisions)
+  - interpretation:
+    - the offline BC collapse is not caused merely by using the full 8-seed specialist dataset
+    - even tail-only specialist injection still snaps the base toward the same specialist-like attractor
+- `v11rx_conflict4_merge_nlite125_macrohead`
+  - first structural BC change: keep base datasets on full action imitation, but make specialist dataset supervise only the macro head
+  - implementation changes:
+    - `distill_v11rx_policy_bc.py` now supports `--dataset-loss-heads`
+    - new launcher: `tools/启动_v11rx_conflict4宏头融合Nlite125_v1002.sh`
+  - tested setting:
+    - dataset loss heads = `all,all,macro_only`
+    - specialist dataset still uses the full `Nlite-125` diagonal set
+  - checked result is still behavior-identical to the previous merge-back / `Nlite-125`-like solution:
+    - bad-seed success `0.875`
+    - only failed seed: `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+  - interpretation:
+    - changing the loss decomposition alone is not enough if the whole policy remains trainable
+    - the next structural step must constrain which parameters can move, not just which heads contribute to loss
+- `v11rx_conflict4_merge_tail2_macro_slice`
+  - stronger structural BC change: specialist remains `macro_only`, and parameter updates are constrained to only the macro slice of `action_net`
+  - implementation changes:
+    - `distill_v11rx_policy_bc.py` now supports `--trainable-param-mode`
+    - supported hard mode: `macro_slice_only`
+    - in the checked run only `1935` parameters were trainable, with macro logits slice `(7, 15)`
+  - tested setting:
+    - specialist seed pool = `6300058,6300006`
+    - dataset loss heads = `all,all,macro_only`
+    - trainable param mode = `macro_slice_only`
+  - checked result is still behavior-identical to the same prior merge-back / `Nlite-125`-like solution:
+    - bad-seed success `0.875`
+    - only failed seed: `6300031`
+    - pressure20: success `1.0`, avg steps `29.0`, avg collisions `9.3`, avg_abs_angle_error_deg `17.52`
+  - interpretation:
+    - even the hardest tested offline constraint so far, where only macro output logits are allowed to move, still snaps to the same attractor
+    - the current collapse is not just “too many parameters updated”; it is deeper in how this base responds to specialist macro injection
+- `v11rx_hybrid_anchor_micro`
+  - first true online mixed-anchor probe on `v11rx`
+  - new trainer: `train_target8_v11rx_hybrid_anchor_finetune.py`
+  - launcher: `tools/启动_v11rx_hybrid_anchor短训_v1002.sh`
+  - setup:
+    - resume/base model = `v11rx_conflict4_micro checkpoint_ep_00250`
+    - anchor datasets = `v11rx conflict4 normal + pressure + Nlite-125 diagonal specialist`
+    - online bad-seed pool = `6300058,6300069,6300031,6300006`
+    - default micro schedule = `4` rounds x `32` PPO episodes with `3` anchor epochs each
+  - first checked result does not pass the gate:
+    - bad-seed success drops to `0.75`
+    - failed seeds: `6300058,6300006`
+    - keeps `6300069` and repairs `6300031`
+    - pressure20: success `1.0`, avg steps `36.55`, avg collisions `7.8`, avg_abs_angle_error_deg `29.35`
+    - normal20: success `1.0`, avg steps `24.8`, avg collisions `3.45`
+  - interpretation:
+    - online mixing is not a no-op, unlike the pure BC merge-back
+    - but this first setting over-amplifies recovery/aggressive behavior:
+      - pressure angle gets much worse than `Nlite-125`
+      - `6300058` and `6300006` are not preserved
+    - this means the path is now parameter tuning of the online mix, not more repetition of the current offline BC recipe
+
+## Latest v11rxc / N19 Absorption Status
+
+After the corrected `N19/N20/N21/N22/N23` wrapper ranking, the next question was whether the best `N19` pressure-tail behavior can be absorbed into the policy itself rather than staying as a wrapper-only surface.
+
+### Important implementation finding
+
+The old teacher export path was structurally weak for this question.
+
+- `export_v11_teacher_dataset.py` originally saved only the policy's raw discrete action.
+- For `N19` and related wrapper surfaces, the key behavior often lives in `effective_macro_bin`, not the original policy macro request.
+- A new export option was added so datasets can label actions from:
+  - `policy`
+  - `effective_macro`
+  - `effective_macro_speed`
+
+This matters because earlier "distill/anchor does nothing" results were at least partly confounded by the dataset not carrying the wrapper's actual executed macro choice.
+
+### New checked probes
+
+- `v11rxc_n19_effective_macro_distill_tiny`
+  - launcher: `tools/启动_v11rxc_N19有效宏蒸馏回灌_v1002.sh`
+  - setting:
+    - normal dataset keeps `policy` labels
+    - pressure and specialist datasets use `effective_macro_speed`
+    - trainable params: `action_net_only`
+  - checked result:
+    - this does move the model strongly
+    - bad-seed gate drops to success `0.75`
+    - fails `6300031`
+    - pressure20 regresses badly on the key tail:
+      - `5200015 = 122 / 83`
+    - pressure20 summary:
+      - `avg_steps = 33.15`
+      - `avg_collision_count = 12.95`
+      - `avg_abs_angle_error_deg` is worse than static `N19`
+    - normal20 score also drops to about `107.952`
+  - interpretation:
+    - effective labels are not inert
+    - but this unconstrained absorption is too strong and destroys the preserved base
+
+- `v11rxc_n19_effective_macro_slice_tiny`
+  - same launcher with:
+    - pressure and specialist labels = `effective_macro`
+    - loss heads = `all,macro_only,macro_only`
+    - trainable params = `macro_slice_only`
+  - checked result on the `N19` wrapper surface:
+    - bad-seed gate = `1.0`
+    - pressure20:
+      - `avg_steps = 27.45`
+      - `avg_collision_count = 7.95`
+      - `avg_abs_angle_error_deg = 17.38`
+      - `5200015 = 61 / 32`
+    - normal20 score = `117.755`
+  - first interpretation looked promising:
+    - the model exactly reproduced static `N19` on the `N19` wrapper surface
+
+- `v11rxc_n19_effective_macro_slice_tiny_nowrapper_eval`
+  - same model as above, but re-evaluated on the no-wrapper `N9` surface via:
+    - `tools/评估_v11rxc_ep112无wrapper_macro6注入_v1002.sh`
+  - checked result:
+    - bad-seed gate drops back to success `0.75`
+    - fails `6300058`
+    - pressure20:
+      - `avg_steps = 29.0`
+      - `5200015 = 61 / 33`
+      - `5200008 = 100 / 48`
+  - comparison against the plain `ep112` base on the same no-wrapper `N9` surface:
+    - result is behavior-identical to baseline at the aggregate level and on the key seeds
+  - interpretation:
+    - this branch does **not** prove real policy absorption
+    - it only reproduces `N19` when evaluated back under the `N19` wrapper surface
+
+- `v11rxc_n9_anchor_n19_effective_macro_tiny`
+  - launcher: `tools/启动_v11rxc_N9在线锚定N19有效宏_v1002.sh`
+  - new mechanism:
+    - online PPO surface = no-wrapper `N9`
+    - base anchor datasets = `N9` normal + `N9` pressure
+    - specialist anchor dataset = `N19` pressure with `effective_macro` labels
+    - trainable params = `macro_slice_only`
+  - checked result:
+    - anchor loss moves:
+      - `2.489956 -> 2.486060 -> 2.482179 -> 2.478315`
+    - behavior stays identical to the no-wrapper baseline
+    - bad-seed gate = `0.75`
+    - pressure20:
+      - `avg_steps = 29.0`
+      - `5200015 = 61 / 33`
+      - `5200008 = 100 / 48`
+  - interpretation:
+    - even when the online training surface is switched to `N9/no-wrapper`, the first constrained anchor setting is still inert at behavior level
+
+- `v11rxc_n9_anchor_n19_effective_actionnet_micro`
+  - same launcher as above, but stronger:
+    - `TRAIN_EXTRA_ARGS=--micro`
+    - `anchor_trainable_param_mode=action_net_only`
+    - higher specialist weight
+    - higher online bad-seed ratio
+    - specialist labels upgraded to `effective_macro_speed`
+  - checked result:
+    - still behavior-identical to the no-wrapper baseline
+    - bad-seed gate remains `0.75`
+    - pressure20 remains:
+      - `avg_steps = 29.0`
+      - `5200015 = 61 / 33`
+      - `5200008 = 100 / 48`
+  - interpretation:
+    - the failure is not just "macro slice is too constrained"
+    - this `N9/no-wrapper + bad-seed-online + N19 teacher anchor` path remains inert even after widening trainable movement
+
+- `v11rxc_n9_pressure_anchor_n19_effective_tiny`
+  - launcher: `tools/启动_v11rxc_N9压力在线锚定N19有效宏_v1002.sh`
+  - stronger alignment test:
+    - online PPO surface stays on no-wrapper `N9`
+    - online seed pool switched from diagonal bad seeds to pressure-tail seeds:
+      - `5200015,5200015,5200015,5200015,5200008,5200022`
+    - specialist teacher remains `N19 effective_macro_speed`
+    - trainable params = `action_net_only`
+  - checked result:
+    - anchor loss moves:
+      - `2.504521 -> 2.488543 -> 2.472691 -> 2.456967`
+    - behavior still remains identical to the no-wrapper baseline
+    - bad-seed gate = `0.75`
+    - pressure20:
+      - `avg_steps = 29.0`
+      - `5200015 = 61 / 33`
+      - `5200008 = 100 / 48`
+      - `5200022 = 44 / 14`
+  - interpretation:
+    - the problem is not only that the previous online surface used the wrong seed family
+    - even a pressure-tail-aligned online anchor recipe still has no measurable behavioral leverage on this base
+
+- `v11rxc_n9_pressure_tail_tiny`
+  - launcher: `tools/启动_v11rxc_N9压力尾部短训_v1002.sh`
+  - direct no-wrapper PPO replay on:
+    - `5200015,5200015,5200015,5200015,5200008,5200022`
+  - checked result:
+    - final gate is still behavior-identical to no-wrapper baseline
+    - no early-stop window:
+      - `checkpoint_ep_00016` and `checkpoint_ep_00032` are both identical to baseline on the no-wrapper gate
+  - interpretation:
+    - the failure is not caused only by anchor loss dominating PPO
+    - even direct short PPO replay on the pressure tail does not move this base
+
+- `v11rxc_n9_pressure_tail_from_n19slice_tiny`
+  - same launcher as above, but resume model swapped to:
+    - `v11rxc_n19_effective_macro_slice_tiny`
+  - checked result:
+    - still behavior-identical to no-wrapper baseline
+  - interpretation:
+    - the issue is not merely that the original `ep112` initialization is wrong while an `N19`-shaped initialization would work
+
+- `v11rxc_n9_pressure_constrained_all_micro`
+  - existing constrained-online trainer reused on no-wrapper `N9`:
+    - launcher base: `tools/启动_v11rxc_N19压力受限在线微调_v1002.sh`
+    - overrides switched to `方案N9`
+    - `TRAIN_EXTRA_ARGS=--micro`
+    - `TRAINABLE_PARAM_MODE=all`
+    - online pressure seed pool = `5200015,5200015,5200015,5200015,5200008,5200022`
+  - checked result:
+    - even the strongest checked constrained-online setting remains behavior-identical to no-wrapper baseline
+    - bad-seed gate = `0.75`
+    - pressure20 remains:
+      - `avg_steps = 29.0`
+      - `5200015 = 61 / 33`
+      - `5200008 = 100 / 48`
+  - interpretation:
+    - this is strong evidence that the current short-horizon adaptation family around `ep112` is exhausted
+
+### Current conclusion
+
+- The strongest checked static surface remains `N19`.
+- The new export fix was necessary and useful because it showed that effective-label training can move the policy.
+- But the currently tested absorption mechanisms still fail the real requirement:
+  - unconstrained effective-label distill moves too much and breaks the base
+  - constrained effective-label distill collapses back to "wrapper-only equivalence"
+  - first `N9/no-wrapper` online anchor probe is still behavior-identical to baseline
+  - stronger no-wrapper online anchor, direct pressure-tail PPO, and constrained-online variants also remain behavior-identical to baseline
+
+### Immediate next step
+
+The next aligned probe is not more wrapper-surface BC repetition.
+
+The next aligned step is no longer another short adaptation shell around `ep112`.
+
+What is now ruled out at short CPU scale:
+
+- wrapper-surface BC merge-back
+- no-wrapper anchor with `macro_slice_only`
+- no-wrapper anchor with `action_net_only`
+- pressure-tail online anchor
+- direct pressure-tail PPO replay
+- pressure-tail constrained-online with all parameters trainable
+
+The next candidate should therefore be more structural, for example:
+
+- a longer-horizon no-wrapper pressure curriculum rather than a tiny/micro gate
+- or a different base/checkpoint family instead of `ep112`
+- or a trainer that changes state visitation / action supervision more directly than the current short PPO + anchor recipes
+
+The key success condition is no longer "matches `N19` under `N19` wrapper", but:
+
+- on no-wrapper `N9`:
+  - `5200015` and ideally `5200008` must move away from the `ep112` baseline
+  - without introducing new failures that are worse than the current baseline
+- `v11rx_hybrid_anchor_micro` checkpoint scan
+  - explicitly checked `checkpoint_ep_00032`, `00064`, `00096`, and `00128`
+  - all four checkpoints are behavior-identical on the short gates:
+    - bad-seed success always `0.75`
+    - failed seeds always `6300058,6300006`
+    - pressure20 always `36.55` steps / `7.8` collisions / `29.35 deg`
+  - interpretation:
+    - there is no early-stop window in this first online hybrid-anchor line
+    - the issue is not “training too long”; it is the training recipe itself
+- `v11rx_hybrid_anchor_tail2lite`
+  - first attempt to weaken the online mix without changing code:
+    - online bad-seed pool reduced to `6300058,6300006`
+    - lower bad-seed env ratio, lighter specialist/base weights, lighter recovery weights
+    - tiny schedule: `2` rounds x `16` PPO episodes with `1` anchor epoch
+  - result is still behavior-identical to `v11rx_hybrid_anchor_micro`
+  - interpretation:
+    - simply making the online mix gentler does not move the policy off the same attractor
+- `v11rx_hybrid_anchor_tail2specialist`
+  - launcher updated so specialist diagonal dataset can be exported from a custom seed subset:
+    - new env var: `SPECIALIST_SEED_POOL`
+    - file changed: `tools/启动_v11rx_hybrid_anchor短训_v1002.sh`
+  - checked run used:
+    - online bad-seed pool = `6300058,6300006`
+    - specialist diagonal dataset = only `6300058,6300006`
+    - specialist dataset shrank from `1289` samples / `8` episodes to `213` samples / `2` episodes
+  - result is still behavior-identical to `v11rx_hybrid_anchor_micro`
+  - interpretation:
+    - the failure to move is not caused only by the old 8-seed specialist dataset pulling other bad-seed behaviors back in
+- `v11rx_hybrid_anchor_tail2pull`
+  - explicit “force it harder” test on the same online path:
+    - tail2-only specialist dataset
+    - less PPO, more anchor epochs, much stronger specialist/recovery weighting
+  - anchor loss drops strongly across epochs (`2.85 -> 2.32`), but eval behavior is still unchanged
+  - interpretation:
+    - the online hybrid-anchor path is currently stuck in a behaviorally invariant attractor under these short CPU runs
+    - loss movement alone is not evidence of useful policy movement here
+- `v11rx_nlite125_fix6300031_hybrid`
+  - reverse-direction repair attempt: start from `Nlite-125` itself and try to repair only its one remaining failed seed `6300031`
+  - setup:
+    - resume/base/normal/pressure/specialist model all set to `Nlite-125`
+    - online bad-seed pool = only `6300031`
+    - specialist diagonal dataset = only `6300031`
+    - tiny online hybrid-anchor schedule: `2` rounds x `16` PPO episodes with `2` anchor epochs
+  - checked result is behavior-identical to the original `Nlite-125` artifact:
+    - bad-seed success stays `0.875`
+    - still only failed seed: `6300031`
+    - preserves `6300058,6300006,6300069`
+    - pressure20 remains at the same prior `Nlite-125` line
+  - interpretation:
+    - the current online hybrid-anchor mechanism is not just ineffective for merging `Nlite-125` into `conflict4`
+    - it is also ineffective for single-seed repair when starting from `Nlite-125` itself
+- `v11rx_nlite125_fix6300031_rl125`
+  - third mechanism family check: pure online RL continuation, no BC merge-back and no hybrid-anchor
+  - setup:
+    - resume model = `Nlite-125`
+    - bad-seed curriculum seed pool = only `6300031`
+    - launcher reused: `tools/启动_v11rx尾部轻保守125_v1002.sh`
+    - overrides remain `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+  - checked result is still behavior-identical to the original `Nlite-125` artifact:
+    - bad-seed success stays `0.875`
+    - still only failed seed: `6300031`
+    - preserves `6300058,6300006,6300069`
+    - pressure20 and normal20 remain on the same prior `Nlite-125` line
+  - interpretation:
+    - this is not only a failure of BC merge-back or hybrid-anchor shells
+    - even direct single-seed online RL continuation does not move `6300031` under the current state/action/reward/override setup
+- `v11rx_nlite125_force6_badseed` and `v11rx_nlite125_soft6_badseed`
+  - targeted wrapper-level diagnosis on `6300031`
+  - trajectory inspection shows the root issue clearly:
+    - under original `Nlite-125` + `方案Nlite`, policy action is effectively fixed at `[2, 1, 0]`
+    - the policy never voluntarily outputs recovery macros
+    - all non-zero `recovery_mode` comes from wrapper-side stuck exploration
+  - this means the current failure is likely a recovery exploration / credit-assignment problem, not simply capacity
+  - direct one-seed eval probes on `6300031`:
+    - forcing stuck macro `6` (`back_then_realign`) gives `success=1`, `54 steps`, `1 collision`
+    - forcing stuck macro `7` also succeeds, but much worse (`94 steps`, `12 collisions`)
+    - forcing macro `2` still fails
+  - global static-eval probe with hard `force6` wrapper:
+    - repairs `6300031`
+    - but breaks `6300058` and `6300006`
+    - effectively lands on the already-known bad pattern similar to the failed hybrid-anchor attractor
+  - global static-eval probe with a softer wrapper:
+    - config added: `configs/v11/方案Nlite_v11rx修6300031温和macro6探针.json`
+    - key idea: earlier stuck detection plus `55%` exploration toward macro choices `[6, 7]` with weights `[0.82, 0.18]`
+  - this softer surface is the first new evidence that meaningfully changes the frontier:
+    - badseed becomes `1.0` (`8/8`) with no failed seeds
+    - badseed avg steps `100.25`, avg collisions `42.125`
+    - pressure20 stays `1.0` with `29.65` steps / `9.65` collisions / `21.91 deg`
+    - normal20 stays `1.0` and is actually strong: `20.25` steps / `2.25` collisions / `20.81 deg`
+  - interpretation:
+    - the `6300031` issue is not fundamentally immovable
+    - changing the wrapper-side stuck exploration surface can repair it without immediately destroying `6300058/6300006`
+    - this is the first concrete signal that a changed learning surface, not a changed optimizer shell, may unlock further progress
+- `v11rx_nlite125_fix6300031_soft6rl125`
+  - first true training test on the new surface:
+    - resume model = `Nlite-125`
+    - training seed pool = only `6300031`
+    - training overrides = `configs/v11/方案Nlite_v11rx修6300031温和macro6探针.json`
+    - evaluation switched back to the original `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+  - checked result:
+    - `6300031` is indeed learned into the policy itself: success `1`, `54` steps, `1` collision under the original eval surface
+    - but this also reintroduces the old tail failures:
+      - `6300058` fails again
+      - `6300006` fails again
+    - aggregate metrics match the already-known bad attractor:
+      - badseed success `0.75`
+      - pressure20 `36.55` steps / `7.8` collisions / `29.35 deg`
+      - normal20 `24.8` steps / `3.45` collisions / `26.64 deg`
+  - interpretation:
+    - the softer `macro6` surface is genuinely capable of teaching the missing `6300031` behavior
+    - but in its current width it pushes the policy into the same basin as the failed `v11rx_hybrid_anchor_micro` family
+    - the remaining problem is no longer “can 6300031 be taught at all”; it is “can that repair be taught without dragging 6300058/6300006 into the aggressive-recovery basin”
+- `v11rx_nlite125_narrow6_badseed`
+  - next static surface narrowing pass after the too-wide `soft6` result
+  - config added: `configs/v11/方案Nlite_v11rx修6300031窄域macro6探针.json`
+  - core idea:
+    - reduce the exploration width relative to `soft6`
+    - use `stuck_macro_explore_prob=0.45`
+    - keep macro choices `[6, 7]` but with stronger `6` bias `[0.9, 0.1]`
+    - collision trigger tightened to `0.72`
+  - static probe result:
+    - keeps `6300031`, `6300058`, and `6300006` all solved
+    - but breaks `6300069` again
+    - badseed success becomes `0.875`, failed seed = `6300069`
+  - interpretation:
+    - narrowing the surface does move in the right direction:
+      - it no longer falls all the way into the `6300058/6300006` failure basin
+  - but the trigger is still too broad / too early for the `6300069` regime
+  - next refinement needs to localize the recovery bias away from the `6300069` geometry, not just weaken it globally
+- `v11rx_nlite125_targeted_far6_stuck10_badseed`
+  - first wrapper-side localized surface that is genuinely selective in static eval
+  - implementation support added in `benchmark_state_dims_10k.py`:
+    - targeted stuck-macro branch with independent thresholds / choices / weights
+    - debug info export for `policy_macro_bin`, `effective_macro_bin`, targeted/generic trigger flags, wrapper distance/angle/collision context
+  - diagnostic script added:
+    - `tools/debug_v11rx_single_seed_trace.py`
+  - trajectory comparison on `Nlite-125` under original `方案Nlite` showed a clean separation:
+    - `6300031` macro-trigger region lives at roughly `distance >= 785` and very long `stuck_time`
+    - `6300069` trigger region stays much closer (`~497-715`)
+    - `6300058` has similar distance to `6300031` but much shorter `stuck_time`
+  - config added:
+    - `configs/v11/方案Nlite_v11rx修6300031远距定向macro6探针.json`
+  - best static localized setting:
+    - target only when `distance >= 760` and `stuck_time >= 10`
+    - targeted choices `[6, 7]` with strong `6` bias
+  - static result on `Nlite-125`:
+    - keeps `badseed 8/8`
+    - `6300031` improves from fail to success (`127 steps`, `65 collisions`)
+    - `6300058 / 6300069 / 6300006` remain solved
+    - `pressure20` and `normal20` remain effectively identical to baseline `Nlite-125`
+  - interpretation:
+    - the wrapper surface can now be localized enough to avoid the old global spillover
+    - but this alone still does not mean the policy can learn it
+- `v11rx_nlite125_fix6300031_targeted_far6_stuck10_rl125`
+  - first training test on the new localized static surface using the original `v11rx` observation
+  - setup:
+    - resume = `Nlite-125`
+    - seed pool = only `6300031`
+    - train surface = `configs/v11/方案Nlite_v11rx修6300031远距定向macro6探针.json`
+    - eval surface = original `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+  - checked result:
+    - still fails only `6300031`
+    - aggregate bad-seed / pressure / normal metrics remain effectively unchanged from the original `Nlite-125`
+  - interpretation:
+    - the localized surface changes static wrapper behavior but is still too hidden from the policy / credit path
+    - this is evidence for a visibility / learnability bottleneck, not just a threshold bottleneck
+- `v11rxc` targeted-context observation branch
+  - new state mode / experiment:
+    - `observable12_target8_macro_library_v11rxc_stage2`
+    - `rppo_medium_lstm128x2_observable12_target8_macro_library_v11rxc_stage2`
+  - files added/changed:
+    - `benchmark_state_dims_10k.py`
+    - `train_target8_v11rxc_bad_seed_curriculum.py`
+    - `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+    - `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - core idea:
+    - keep the `v11rx` action space unchanged
+    - keep warm-start compatibility high
+    - explicitly expose targeted stuck-context structure in the observation instead of hiding it only inside wrapper-side macro injection
+  - observation change:
+    - the wrapper computes targeted-context from the same localized surface logic
+    - this signal is written directly into observation features so PPO can distinguish the special regime earlier
+- `v11rxc_nlite125_fix6300031_targeted_far6_stuck10_tiny64`
+  - first short training test on the new `v11rxc` observation branch
+  - setup:
+    - resume = `Nlite-125`
+    - seed pool = only `6300031`
+    - train surface = `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+    - eval surface = original `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - corrected formal re-eval on the true original surface:
+    - `badseed 0.875`
+    - only failed seed remains `6300031`
+    - but `6300031` improves materially versus baseline fail:
+      - `260/204` instead of the original `260/204`? no, behavior is still fail-level on success, but collisions stay at `204`
+      - key point is that `6300058 / 6300069 / 6300006` all remain solved
+    - `pressure20` remains fully usable:
+      - success `1.0`
+      - no obvious collapse into the aggressive bad basin
+    - `normal20` score remains near baseline (`108.946`)
+  - interpretation:
+    - `64ep` is not enough to write `6300031` into the policy
+    - but unlike the plain `v11rx` branch, this path preserves the rest of the frontier cleanly
+    - this is the first sign that the targeted-context observation branch might create a useful early learning surface
+- `v11rxc_nlite125_fix6300031_targeted_far6_stuck10_rl125`
+  - follow-up `125ep` training on the same `v11rxc` branch
+  - corrected formal re-eval on the true original surface:
+    - `6300031` is now learned into the policy itself:
+      - success `1`
+      - `54 steps`
+      - `1 collision`
+    - but the policy over-shoots into the old bad basin on the remaining tail seeds:
+      - `6300058` fails again (`260 steps`, `241 collisions`)
+      - `6300006` fails again (`260 steps`, `12 collisions`)
+      - `6300069` remains solved and actually improves strongly (`67 steps`, `7 collisions`)
+    - pressure side becomes much more aggressive and clearly worse than baseline:
+      - still `1.0` success on `20`
+      - but several episodes jump to very high recovery rates / steps / final angle
+      - examples include `112` and `122` step episodes with `~0.70` recovery rate and very high terminal angle
+    - `normal20` score stays near baseline (`108.754`), so the main damage is concentrated in hard/pressure regimes
+  - interpretation:
+    - this is the clearest evidence so far that the key missing ingredient was explicit policy visibility of the localized repair surface
+    - once the signal is visible, PPO can indeed learn the `6300031` repair into the policy
+    - but the current `125ep` continuation is already past the safe window and starts dragging `6300058 / 6300006` back into the aggressive recovery basin
+    - the next search should not abandon `v11rxc`; it should search for the earlier stop window on this branch
+- `v11rxc` early-stop window search
+  - hypothesis tested:
+    - there may be a narrow checkpoint window between `64ep` and `125ep` where `6300031` is learned but `6300058 / 6300006` are still preserved
+  - runs checked:
+    - `runs/v11rxc_nlite125_fix6300031_targeted_far6_stuck10_search112`
+      - checkpoints `80 / 96 / 112`
+    - standalone checkpoints:
+      - `ep104`
+      - `ep108`
+      - `ep110`
+      - `ep111`
+  - corrected formal re-eval on the true original surface
+    - `ep80`:
+      - still early-side / no learning transfer
+      - `6300031` still fails with the old `260 / 204`
+      - `6300058 / 6300069 / 6300006` all remain solved
+    - `ep96`:
+      - behavior-identical to `ep80`
+    - `ep104`:
+      - still behavior-identical to `ep96`
+    - `ep108`:
+      - still behavior-identical to `ep104`
+    - `ep110`:
+      - still behavior-identical to `ep108`
+    - `ep111`:
+      - still behavior-identical to `ep110`
+    - `ep112`:
+      - sharp phase change
+      - `6300031` flips to success (`54 steps`, `1 collision`)
+      - but `6300058` and `6300006` already fail again
+  - interpretation:
+    - the `v11rxc` single-seed continuation does not expose a broad useful early-stop window
+    - the transition is effectively a cliff:
+      - `111ep` and earlier = too early
+      - `112ep` = already in the bad basin
+    - so “keep tuning the stop point” is not the best next lever on the pure single-seed `v11rxc` path
+- `v11rxc_conflict4_targeted_far6_stuck10_rl125`
+  - next hypothesis:
+    - keep the `v11rxc` visibility gain, but stabilize it by mixing `6300031` with `6300058,6300006,6300069`
+  - setup:
+    - seed pool = `6300031,6300058,6300006,6300069`
+    - train surface = `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+    - eval surface = original `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - checked result:
+    - returns to the same early-side behavior as `64ep`
+    - `6300031` still fails with `260 / 204`
+    - `6300058 / 6300069 / 6300006` all remain solved
+  - interpretation:
+    - equal-weight conflict-set mixing stabilizes the branch, but it also washes out the `6300031` learning signal entirely
+- `v11rxc_conflict4w2_targeted_far6_stuck10_rl125`
+  - next hypothesis:
+    - keep the same conflict-set stabilizer, but oversample `6300031`
+  - setup:
+    - seed pool = `6300031,6300031,6300058,6300006,6300069`
+  - checked result:
+    - still behavior-identical to the early-side branch
+    - `6300031` does not cross the threshold
+    - `6300058 / 6300069 / 6300006` remain solved
+  - interpretation:
+    - simply duplicating `6300031` inside the seed pool is not enough
+    - the stabilizing seeds still suppress the sharp policy flip
+- `v11rxc` two-stage short curriculum probes
+  - new trainer added:
+    - `train_target8_v11rxc_bad_seed_mergeback_curriculum.py`
+  - purpose:
+    - test whether `v11rxc` can use a short phase1 push on `6300031` to cross the learning cliff,
+    - then immediately use a short phase2 stabilization stage to recover `6300058 / 6300006`
+  - key implementation note:
+    - the trainer supports independent `phase1-seed-pool` and `phase2-seed-pool`
+    - this was necessary because sharing one seed pool across both phases just reproduced the earlier washed-out behavior
+- `v11rxc_two_stage_6300031push112_tailstabilize16`
+  - phase1:
+    - seed pool = only `6300031`
+    - episodes = `112`
+    - env overrides = `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+  - phase2:
+    - seed pool = `6300058,6300006,6300069`
+    - episodes = `16`
+    - bad-seed env ratio = `0.75`
+    - env overrides = original `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - corrected formal re-eval on original surface:
+    - `6300031` stays learned: `54 steps`, `1 collision`
+    - `6300069` stays solved: `67 steps`, `7 collisions`
+    - `6300058` still fails: `260 steps`, `241 collisions`
+    - `6300006` still fails: `260 steps`, `12 collisions`
+  - interpretation:
+    - a very short stabilization stage on `6300058,6300006,6300069` does not pull the policy back out of the bad basin once `6300031` has crossed the threshold
+- `v11rxc_two_stage_6300031push112_tail2stabilize32`
+  - follow-up hypothesis:
+    - maybe phase2 should focus only on the actually regressed tail seeds, and run longer
+  - phase2 changed to:
+    - seed pool = `6300058,6300006`
+    - episodes = `32`
+    - bad-seed env ratio = `1.0`
+  - checked result:
+    - behavior is still effectively identical to the previous two-stage probe:
+      - `6300031` success `54 / 1`
+      - `6300058` fail `260 / 241`
+      - `6300069` success `67 / 7`
+      - `6300006` fail `260 / 12`
+  - interpretation:
+    - even stronger tail-only stabilization does not recover the regressions
+    - the current two-stage replay shell is not sufficient once the `v11rxc` policy has crossed into the aggressive basin
+
+Current refined interpretation after two-stage probes:
+
+- `v11rxc` has now cleared two important questions:
+  - Can the policy learn the `6300031` repair at all once the localized surface is visible?
+    - yes
+  - Can the current replay/curriculum shell then quickly stabilize `6300058 / 6300006` afterward?
+    - no, not with the current shell
+- That means the next lever should no longer be:
+  - more checkpoint micro-search
+  - more seed duplication
+  - or more replay-only short stabilization stages
+- The next lever should be mechanism-level phase2 changes, for example:
+  - a different phase2 surface than raw `方案Nlite`
+  - or explicit pressure against high recovery-rate behavior during stabilization
+  - or some direct constraint on the newly learned aggressive basin, rather than hoping replay alone will undo it
+
+Current refined interpretation:
+
+- `v11rxc` is still the first branch that proves the `6300031` repair is learnable once the surface is visible to the policy.
+- But with the current trainer and reward surface, the learning transition is too discontinuous:
+  - pure `6300031` training gives a cliff at about `111 -> 112`
+  - adding the stabilizing conflict seeds removes the cliff by suppressing the repair entirely
+- So the next useful lever should no longer be:
+  - more single-episode checkpoint search
+  - or simple seed-pool duplication
+- The next useful lever is more likely one of:
+  - a staged curriculum inside `v11rxc`
+    - phase1: short single-seed push to cross the `6300031` threshold
+    - phase2: immediate short conflict-set stabilization before the bad basin deepens
+  - or a lighter-weight stabilization constraint than full conflict-set replay
+    - for example only `6300058,6300006`
+    - or reduced fraction / shorter follow-up stage
+
+- `v11rxc_hybrid_anchor_n2pull_tiny`
+  - first online hybrid-anchor probe on the new `v11rxc` branch
+  - new files:
+    - `train_target8_v11rxc_hybrid_anchor_finetune.py`
+    - `tools/启动_v11rxc_hybrid_anchor短训_v1002.sh`
+  - setup:
+    - resume model = `v11rxc_two_stage_6300031push112_tail2_N2stabilize32` final model
+    - base anchor models = `v11rxc_nlite125_fix6300031_targeted_far6_stuck10_tiny64` for normal + pressure
+    - specialist anchor model = `v11rxc_nlite125_fix6300031_targeted_far6_stuck10_search112 checkpoint_ep_00112`
+    - specialist seed pool = only `6300031`
+    - online bad-seed pool = only `6300058,6300006`
+    - schedule = `--tiny`
+  - checked result:
+    - this path does move behavior; it is not inert
+    - bad-seed gate becomes:
+      - `6300031` regresses back to fail (`260 / 204`)
+      - `6300058` recovers to success (`83 / 28`)
+      - `6300069` recovers to success (`158 / 96`)
+      - `6300006` recovers to success (`130 / 67`)
+    - pressure20 remains usable and relatively conservative:
+      - success `1.0`
+      - no high-recovery `112 / 122` step episodes like the aggressive `N2` model
+    - normal20 score stays near the earlier `tiny64` / safe-side regime (`108.900`)
+  - interpretation:
+    - unlike the earlier `v11rx` online hybrid-anchor path, the `v11rxc` anchor mechanism is behaviorally active
+    - it can pull the model back out of the aggressive basin for `6300058 / 6300006`
+    - but the pull is currently too base-dominant and loses the `6300031` repair completely
+
+- `v11rxc_hybrid_anchor_n2pull_hold6300031_tiny`
+  - second `v11rxc` online hybrid-anchor probe
+  - purpose:
+    - test whether stronger `6300031` preservation pressure is enough without changing the mechanism itself
+  - changes versus the first probe:
+    - less PPO, more anchor epochs
+    - stronger specialist dataset weight
+    - online bad-seed pool changed to `6300031,6300031,6300058,6300006`
+    - stronger recovery/stuck weighting
+  - checked result:
+    - behavior is effectively identical to the first `v11rxc` anchor probe
+    - bad-seed gate stays:
+      - `6300031` fail (`260 / 204`)
+      - `6300058` success (`83 / 28`)
+      - `6300069` success (`158 / 96`)
+      - `6300006` success (`130 / 67`)
+    - pressure20 and normal20 are also unchanged
+  - interpretation:
+    - the current `v11rxc` online hybrid-anchor mechanism is now proven active, but it converges quickly to a specific early-side attractor
+    - simply increasing specialist weight, anchor epochs, or `6300031` online frequency is not enough to hold the learned `6300031` repair
+    - the next useful lever should be a materially different specialist constraint, for example:
+      - multiple `6300031` specialist traces from nearby checkpoints instead of only `ep112`
+      - a phase split where anchor is applied before any online PPO drift
+      - or direct parameter / loss constraints that preserve the `6300031` specialist slice while base anchors control the rest
+
+- `v11rxc_hybrid_anchor_multi6300031_tiny`
+  - third `v11rxc` online hybrid-anchor probe
+  - purpose:
+    - test whether the failure to preserve `6300031` was caused by using only one specialist teacher trace
+  - setup:
+    - same base anchor setup as the earlier `n2pull` probes
+    - specialist changed from one dataset to three separate `6300031` success datasets:
+      - `ep112`
+      - `rl125`
+      - `N2 final`
+    - all three are diagonal `6300031` success traces under the same `v11rxc` state mode
+  - checked result:
+    - behavior is still effectively identical to the earlier two `v11rxc` anchor probes
+    - bad-seed gate remains:
+      - `6300031` fail (`260 / 204`)
+      - `6300058` success (`83 / 28`)
+      - `6300069` success (`158 / 96`)
+      - `6300006` success (`130 / 67`)
+    - pressure20 and normal20 are unchanged (`108.900` normal score)
+  - interpretation:
+    - the missing ingredient is not “more diversity of successful `6300031` specialist traces”
+    - the current anchor training dynamics still collapse quickly to the same early-side/base-dominant attractor
+    - the next mechanism shift should now be more structural than dataset-composition based, for example:
+      - apply anchor before any online PPO continuation
+      - constrain which parameters can move during anchor pull
+      - or use a direct specialist-preservation loss on a smaller policy slice rather than whole-policy anchor updates
+
+- `v11rxc_hybrid_anchor_multi6300031_macro_slice_tiny_v2`
+  - fourth `v11rxc` online hybrid-anchor probe
+  - purpose:
+    - test whether the collapse to the early-side attractor was caused by whole-policy anchor updates
+  - structural change:
+    - `train_target8_v11rxc_hybrid_anchor_finetune.py` now supports:
+      - `--anchor-trainable-param-mode all`
+      - `--anchor-trainable-param-mode action_net_only`
+      - `--anchor-trainable-param-mode macro_slice_only`
+    - checked run used:
+      - `anchor_trainable_param_mode=macro_slice_only`
+      - `anchor_trainable_params=1935`
+      - `macro_slice=(7, 15)`
+    - specialist datasets remained the 3-way `6300031` success set
+  - checked result:
+    - still behavior-identical to the prior `v11rxc` anchor probes
+    - bad-seed gate remains:
+      - `6300031` fail (`260 / 204`)
+      - `6300058` success (`83 / 28`)
+      - `6300069` success (`158 / 96`)
+      - `6300006` success (`130 / 67`)
+    - pressure20 and normal20 are unchanged (`108.900` normal score)
+  - interpretation:
+    - even when anchor updates are constrained to only the macro logits slice, the online `v11rxc` anchor path still converges to the same base-dominant attractor
+    - this strongly suggests the current online hybrid-anchor family is near exhaustion for this objective
+    - the next useful lever should move away from the current hybrid-anchor shell itself, not just retune its dataset mix, weights, or trainable-parameter mask
+
+- `v11rxc_distill_mergeback_macro_slice`
+  - first offline constrained-distillation probe on the `v11rxc` branch
+  - new files:
+    - `distill_v11rxc_policy_bc.py`
+    - `tools/启动_v11rxc约束蒸馏回灌_v1002.sh`
+  - setup:
+    - resume/base model = `v11rxc_two_stage_6300031push112_tail2_N2stabilize32` final model
+    - base datasets = `v11rxc tiny64` normal + pressure
+    - specialist dataset = `v11rxc rl125` diagonal `6300031`
+    - `dataset_loss_heads = all,all,macro_only`
+    - `trainable_param_mode = macro_slice_only`
+    - trainable params = `1935`
+  - checked result:
+    - loss moves smoothly across epochs (`0.808858 -> 0.800252`)
+    - but behavior is again exactly the same base-dominant attractor:
+      - `6300031` fail (`260 / 204`)
+      - `6300058` success (`83 / 28`)
+      - `6300069` success (`158 / 96`)
+      - `6300006` success (`130 / 67`)
+    - pressure20 and normal20 remain unchanged (`108.900`)
+  - interpretation:
+    - the issue is not specific to the online PPO+anchor shell
+    - even offline constrained merge-back on the macro slice alone still lands on the same attractor
+    - this gives stronger evidence that the current whole family of “base+specialist constrained merge-back” mechanisms is near exhaustion for the present objective
+
+- `v11rxc_constrained_online_tail2_tiny`
+  - first online constrained-parameter finetune probe on the `v11rxc` branch
+  - new files:
+    - `train_target8_v11rxc_constrained_online_finetune.py`
+    - `tools/启动_v11rxc受限在线微调_v1002.sh`
+  - purpose:
+    - test whether pure online PPO continuation can recover `6300058 / 6300006` without losing `6300031`,
+      if PPO is only allowed to update a very small macro-related parameter slice
+  - setup:
+    - resume model = `v11rxc_two_stage_6300031push112_tail2_N2stabilize32` final model
+    - seed pool = only `6300058,6300006`
+    - `trainable_param_mode = macro_slice_only`
+    - `trainable_params = 1935`
+    - schedule = `--tiny`
+  - checked result:
+    - behavior is effectively identical to the original `N2 final` model
+    - bad-seed gate remains:
+      - `6300031` success (`54 / 1`)
+      - `6300058` fail (`260 / 241`)
+      - `6300069` success (`67 / 7`)
+      - `6300006` fail (`260 / 12`)
+    - pressure20 is also unchanged at the aggressive `N2` profile
+    - normal20 score remains `108.754`
+  - interpretation:
+    - unlike the base+specialist merge-back family, this constrained online finetune does not even move behavior
+    - that means “only let a tiny macro slice adapt online” is too weak a lever to recover the tail regressions once `6300031` has been learned
+    - the next mechanism should either:
+      - move a larger but still structured parameter block,
+      - or change the training surface/reward itself rather than relying on narrow-parameter continuation
+
+- `v11rxc_constrained_online_tail2_actionnet_tiny`
+  - second online constrained-parameter finetune probe on the `v11rxc` branch
+  - purpose:
+    - test whether a larger structured block than `macro_slice_only` is enough to recover the tail failures
+  - setup:
+    - same as `v11rxc_constrained_online_tail2_tiny`, except:
+      - `trainable_param_mode = action_net_only`
+      - trainable params remain `1935` under the current action-head layout
+  - checked result:
+    - behavior is still exactly identical to the original `N2 final` line
+    - bad-seed gate remains:
+      - `6300031` success (`54 / 1`)
+      - `6300058` fail (`260 / 241`)
+      - `6300069` success (`67 / 7`)
+      - `6300006` fail (`260 / 12`)
+    - pressure20 and normal20 remain unchanged (`108.754`)
+  - interpretation:
+    - enlarging the constrained online block from `macro_slice_only` to `action_net_only` still does not move behavior at all
+    - the current constrained-online parameter-mask family is likely too weak a lever in this basin
+
+- `v11rxc_two_stage_6300031push112_tail2_N3stabilize32_resume125`
+  - first corrected `N3` phase2-surface probe
+  - important fix:
+    - the earlier `N3` launcher version forgot `--resume-model`
+    - corrected run now resumes from `v11rx_tail2_conservative_lite_125 checkpoint_ep_00125`, consistent with the earlier `v11rxc` learning line
+  - setup:
+    - phase1 = `6300031 @ 112ep` on the targeted `macro6` surface
+    - phase2 = `6300058,6300006 @ 32ep`
+    - phase2 surface = `configs/v11/方案N3_v11rxc尾部更强抑激进稳定探针.json`
+  - checked result:
+    - bad-seed gate is still effectively identical to the prior `N2 final` line:
+      - `6300031` success (`54 / 1`)
+      - `6300058` fail (`260 / 241`)
+      - `6300069` success (`67 / 7`)
+      - `6300006` fail (`260 / 12`)
+    - pressure20 and normal20 also remain on the same aggressive line (`108.754`)
+  - interpretation:
+    - simply making the phase2 surface more anti-aggressive is not enough by itself
+    - the next useful question is now whether phase2 is update-strength limited under the stronger surface,
+      or whether this surface family is also already saturated
+
+- `v11rxc_two_stage_6300031push112_tail2_N3stabilize32_resume125_lr2`
+  - follow-up `N3` phase2-surface probe with stronger phase2 update strength
+  - setup:
+    - same as `..._N3stabilize32_resume125`
+    - `phase2_learning_rate = 6e-5`
+  - checked result:
+    - still behavior-identical to `N2 final`
+    - bad-seed gate remains:
+      - `6300031` success (`54 / 1`)
+      - `6300058` fail (`260 / 241`)
+      - `6300069` success (`67 / 7`)
+      - `6300006` fail (`260 / 12`)
+    - pressure20 and normal20 are unchanged (`108.754`)
+  - interpretation:
+    - the stronger `N3` phase2 surface is not merely update-strength limited at this scale
+    - at least under short CPU schedules, this surface family also appears saturated
+
+- `v11rxc_two_stage_6300031push112_tail2_rewardpen32`
+  - first explicit phase2 recovery-reward shaping probe in `env.py`
+  - implementation changes:
+    - `blind_nav_rl/env.py` now exposes separate `v10` recovery reward scales for:
+      - collision bonus
+      - backward-escape bonus
+      - stuck bonus
+      - progress-restart bonus
+      - clear bonus
+      - negative-progress penalty
+      - recovery-switch penalty
+      - premature-recovery penalty
+      - idle-recovery penalty
+      - post-clear recovery penalty
+    - new phase2 config:
+      - `configs/v11/方案N4_v11rxc尾部显式恢复惩罚探针.json`
+    - new launcher:
+      - `tools/启动_v11rxc两阶段显式恢复惩罚_v1002.sh`
+  - setup:
+    - phase1 = `6300031 @ 112ep` on `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+    - phase2 = `6300058,6300006 @ 32ep`
+    - phase2 surface = explicit reward penalties plus lighter recovery bonuses
+    - eval remains on original `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - checked result:
+    - still behavior-identical to `N2 final`
+    - bad-seed gate remains:
+      - `6300031` success (`54 / 1`)
+      - `6300058` fail (`260 / 241`)
+      - `6300069` success (`67 / 7`)
+      - `6300006` fail (`260 / 12`)
+    - pressure20 and normal20 are unchanged (`108.754`)
+  - interpretation:
+    - simply splitting phase2 recovery reward terms into explicit bonus/penalty knobs is still not enough to leave the same attractor
+    - at least under short CPU schedules, the remaining bottleneck is deeper than wrapper thresholds plus reward-surface weighting
+
+- `v11rxc` tail trace diagnosis on `6300058 / 6300006`
+  - new tooling:
+    - `tools/debug_v11rx_single_seed_trace.py` now records per-step macro bins plus recovery-segment summaries
+    - `tools/诊断_v11rxc尾部种子trace_v1002.sh`
+  - compared models:
+    - `Nlite-125`
+    - `v11rxc ep112`
+    - `v11rxc N2 final`
+  - key finding:
+    - `ep112` and `N2 final` are behavior-identical on the remaining tail failures; phase2 is not the cause of those failures
+    - on both `6300058` and `6300006`, the policy itself outputs `policy_macro_bin=6` for essentially the whole episode
+    - wrapper first allows it near step `21`, then the policy keeps reopening the same `back_then_realign` macro and falls into a long recovery loop
+    - on `Nlite-125`, by contrast, the policy keeps `policy_macro_bin=0`, and only occasional wrapper-triggered nonzero macros appear
+  - interpretation:
+    - the main remaining issue is not just reward scale or replay distribution
+    - it is structural: policy-side macro `6` is being used as a persistent mode instead of a bounded trigger
+
+- `v11rxc_ep112_releasegate_eval`
+  - first structural wrapper-semantics probe
+  - implementation changes:
+    - `benchmark_state_dims_10k.py` adds optional wrapper gate `policy_macro_requires_release`
+    - new config:
+      - `configs/v11/方案N5_v11rxc策略宏需释放评估探针.json`
+    - new eval launcher:
+      - `tools/评估_v11rxc_ep112策略宏释放门_v1002.sh`
+  - mechanism:
+    - a nonzero policy macro must drop back to `0` before the same policy-side macro stream can trigger again
+    - wrapper-side targeted/generic stuck exploration is still allowed
+  - checked static-eval result on `ep112` under the `N5` surface:
+    - `6300031` success (`54 / 1`)
+    - `6300058` success (`72 / 17`)
+    - `6300069` fail (`260 / 225`)
+    - `6300006` success (`132 / 73`)
+    - pressure20 remains `1.0`
+    - normal20 score rises to `117.755`
+  - same static-eval result also appears on `N2 final`
+  - interpretation:
+    - this is the first mechanism after `v11rxc` that materially leaves the old `N2 final` attractor
+    - the release gate repairs `6300058 / 6300006` without losing `6300031`
+    - but it also breaks `6300069`, so it is not yet a full replacement surface
+
+- `v11rxc_ep112_releasegate_fix6300069_rl64`
+  - first short RL continuation on top of the `N5` release-gate surface
+  - launcher:
+    - `tools/启动_v11rxc_ep112_releasegate修6300069_v1002.sh`
+  - setup:
+    - resume model = `v11rxc ep112`
+    - training seed pool = only `6300069`
+    - train surface = `N5 release gate`
+    - eval surface = original `configs/v11/方案Nlite_v11rxc尾部轻保守探针.json`
+  - checked result:
+    - `6300069` is repaired again (`158 / 96`)
+    - `6300058` and `6300006` stay solved
+    - but `6300031` regresses completely (`260 / 204`)
+    - pressure20 stays usable and lands back near the earlier safe-side line
+    - normal20 score returns to about `108.900`
+  - interpretation:
+    - `N5` is not just a static-eval trick; it is a trainable structural lever
+    - but a direct single-seed `6300069` continuation on top of `N5` simply trades away `6300031`
+    - the new frontier is now a real structural tradeoff:
+      - `ep112 + N5 static gate` preserves `6300031` and repairs `6300058 / 6300006`
+      - `+ 6300069` short RL continuation repairs `6300069` too, but loses `6300031`
+
+- `v11rxc_ep112_clearrearm_eval`
+  - second structural wrapper-semantics probe
+  - new config:
+    - `configs/v11/方案N6_v11rxc策略宏释放加脱困重武装评估探针.json`
+  - new idea:
+    - keep the `N5` release gate
+    - additionally re-arm policy macros automatically after a clear window:
+      - `time_since_collision >= 1.5`
+      - `no_progress_time <= 0.25`
+      - `stuck_time <= 0.25`
+  - checked static-eval result:
+    - `6300031` success (`54 / 1`)
+    - `6300058` regresses to fail (`260 / 223`)
+    - `6300069` is repaired back to success (`69 / 17`)
+    - `6300006` stays success (`132 / 73`)
+    - normal20 score remains `117.755`
+  - interpretation:
+    - generic post-clear macro re-arm is behaviorally active
+    - it does bring back the segmented `6300069` use of `macro6`
+    - but it over-opens the gate and reintroduces a bad `6300058` line
+    - this means the core tradeoff is now more specific:
+      - `6300069` needs some re-arm freedom
+      - `6300058` cannot tolerate that same generic re-arm rule
+
+- `v11rxc_ep112_macro6gate_eval`
+  - third structural wrapper-semantics probe
+  - new config:
+    - `configs/v11/方案N7_v11rxc仅约束macro6释放评估探针.json`
+  - new idea:
+    - apply the release gate only to policy `macro_bin=6`
+    - leave other policy macros unrestricted
+  - checked static-eval result:
+    - still exactly identical to `N5`
+    - `6300031` success (`54 / 1`)
+    - `6300058` success (`72 / 17`)
+    - `6300069` fail (`260 / 225`)
+    - `6300006` success (`132 / 73`)
+  - interpretation:
+    - the observed `N5` improvement was already dominated by constraining policy-side `macro6`
+    - narrowing the gate from “all macros” to only `macro6` preserves the `N5` behavior exactly
+    - this confirms the active difference between `N5` and `N6` is the re-arm rule, not the choice of gating scope
+
+- `v11rxc_ep112_near_rearm_eval`
+  - fourth structural wrapper-semantics probe
+  - new config:
+    - `configs/v11/方案N8_v11rxc释放后仅近距重武装评估探针.json`
+  - new idea:
+    - keep `N6` generic clear re-arm
+    - but only allow that re-arm when target distance has already dropped below `450`
+  - checked static-eval result:
+    - behavior is effectively identical to `N6`
+    - still `6300031 + 6300069 + 6300006`
+    - still fails `6300058`
+  - interpretation:
+    - the `6300058` failure is not explained by generic clear re-arm happening only at large distances
+    - simply clipping clear re-arm to a nearer distance band is not enough
+
+- `v11rxc_ep112_nowrapper6_eval`
+  - fifth structural wrapper-semantics probe
+  - new config:
+    - `configs/v11/方案N9_v11rxc近N6但wrapper不注入macro6评估探针.json`
+  - new idea:
+    - keep `N6` policy-side release/rearm behavior
+    - but remove `macro6` from wrapper generic stuck exploration choices
+  - checked static-eval result:
+    - `6300031` success (`54 / 1`)
+    - `6300058` still fails (`260 / 223`)
+    - `6300069` stays success (`69 / 17`)
+    - `6300006` regresses materially (`186 / 123`)
+    - normal20 score drops to `115.601`
+  - interpretation:
+    - `6300058` is not mainly caused by wrapper-side generic `macro6` reinjection
+    - `6300006` still benefits from wrapper access to `macro6`
+    - this sharply suggests the remaining tradeoff is not one global macro gate:
+      - `6300058` looks more policy-side
+      - `6300006` still depends on wrapper-side rescue behavior
+
+Current new interpretation:
+
+- The previous `v11rx` localized surface work solved the “where should the repair happen?” question.
+- The new `v11rxc` branch strongly suggests the remaining bottleneck was “can the policy actually see and learn that surface?”
+- Answer: yes, it can.
+- But the useful region is narrow:
+  - `64ep` on `v11rxc`: still too early
+  - `125ep` on `v11rxc`: already too far, `6300058 / 6300006` regress
+- The whole current continuation family now looks close to exhausted under short CPU runs:
+  - merge-back / anchor / distill variants collapse to a base-dominant or specialist-dominant attractor
+  - constrained-online mask variants are too weak to move behavior
+  - stronger anti-aggressive phase2 surfaces (`N3`) are saturated
+  - explicit phase2 recovery reward penalties (`N4`) are also saturated
+- A new structural lever is now proven behaviorally active:
+  - wrapper-side release gating of policy macros (`N5`) changes the attractor in a way reward-scale tuning never did
+- Two nearby variants are now ruled out as insufficient:
+  - only gating `macro6` instead of all policy macros (`N7`) does not change behavior from `N5`
+- One nearby variant is now proven active but still incomplete:
+  - generic clear-based rearm after release (`N6`) flips the frontier from `6300058` toward `6300069`
+- Two additional nearby variants are now ruled out as insufficient:
+  - near-distance clear rearm (`N8`) does not improve on `N6`
+  - removing wrapper generic `macro6` (`N9`) harms `6300006` without fixing `6300058`
+- But the frontier is still unresolved:
+  - `N5` static gate gives `6300031 + 6300058 + 6300006`
+  - `N6` static gate gives `6300031 + 6300069 + 6300006`
+  - `N5 + 6300069 RL64` gives `6300058 + 6300069 + 6300006`
+  - neither currently gives all four `6300031,6300058,6300069,6300006`
+- So the most promising next step is now:
+  - stay on `v11rxc`
+  - pivot to structural wrapper/policy-semantics work rather than reward-weight tuning
+  - especially around:
+    - seed-cluster-specific tradeoffs rather than one global macro gate
+    - `6300058` now looks like the main policy-side blocker
+    - `6300006` still needs wrapper-side `macro6` rescue access
+    - preserving the `ep112 + N5` `6300031` behavior while selectively reintroducing enough freedom to keep `6300069`
+  - gate on `6300031, 6300058, 6300069, 6300006` together before any longer eval
+
+Current interpretation:
+
+- `v11rx` action semantics are the first evidence that the old `6300069` barrier is breakable.
+- The plain 8-seed `v11rx` continuation is unstable; more training did not dominate the earlier good checkpoint.
+- Narrowing to the 4-seed conflict set does change the failure distribution in a useful way, but it still does not dominate.
+- The best current `v11rx` intermediate base is `v11rx_conflict4_micro checkpoint_ep_00250`.
+- The remaining unresolved tail is now:
+  - `6300058,6300006`
+- The current blocker is no longer action-head capacity alone; under unchanged `方案M`, the narrow replay training distribution can become behaviorally inert.
+- A stronger conservative override can move the tail failures, but the current `方案N` overshoots and breaks too many previously fixed seeds.
+- The strongest current `v11rx` follow-up signal is now an early-stop window, not a longer continuation:
+  - `v11rx_tail2_conservative_lite_micro checkpoint_ep_00125`
+  - independently reproduced as `runs/v11rx_tail2_conservative_lite_125/.../checkpoint_ep_00125.zip`
+- Both tested offline BC merge-back recipes collapse toward the specialist and do not preserve the stronger `conflict4` base.
+- Narrowing the offline specialist dataset from the full 8 bad seeds down to only `6300058,6300006` still does not prevent that collapse.
+- Even changing BC from joint-action imitation to `specialist = macro_only` loss still does not prevent that collapse.
+- Even constraining updates to only the macro slice of `action_net` still does not prevent that collapse.
+- The tested online `v11rx` hybrid-anchor variants all show optimizer/loss movement but no gate-visible behavior movement:
+  - no early-stop window
+  - no response to lighter mixing
+  - no response to tail2-only specialist datasets
+  - no response even to much stronger anchor pull
+  - no response even when inverted into a single-seed repair path from `Nlite-125`
+- Pure online RL continuation from `Nlite-125` on only `6300031` also fails to move behavior.
+- But a changed wrapper exploration surface does move behavior immediately:
+  - hard `force6` proves macro `6` is the right local escape primitive for `6300031`
+  - softer `macro6`-biased exploration is currently the most promising new surface because it reaches `badseed 8/8` in static evaluation while keeping pressure/normal broadly usable
+- And a true training test confirms that this surface can write the `6300031` repair into the policy itself.
+- However, the current softer `macro6` surface is still too broad:
+  - it teaches `6300031`
+  - but simultaneously drags the policy back into the known `0.75` badseed / `36.55` pressure-step attractor
+- A narrower static surface can already avoid the `6300058/6300006` regression, but now breaks `6300069` instead.
+- So the current online hybrid-anchor implementation is not the fastest next lever for short CPU iteration.
+- The current most defensible next step is now:
+  - keep `Nlite-125` as the specialist reference artifact
+  - keep `v11rx_conflict4_micro checkpoint_ep_00250` as the preserved base
+  - stop spending short-cycle CPU iterations on the current hybrid-anchor recipe
+  - stop spending short-cycle CPU iterations on the current offline BC merge-back recipe family
+  - stop spending short-cycle CPU iterations on direct single-seed RL continuation under the same current overrides as well
+  - the next attempt should keep the new `macro6`-biased idea but narrow where it applies
+  - the main question is now:
+    - how to localize the `6300031` repair surface so it does not spill over into either:
+      - the `6300058/6300006` aggressive-recovery basin
+      - or the old `6300069` regression basin
+  - likely next levers:
+    - make the new wrapper logic conditional on a narrower stuck signature
+    - reduce its action on seeds that are already solved
+    - or build a scenario-/episode-local trigger instead of a global wrapper change
+
+Immediate next move:
+
+- continue on `v11rx`, not more BC on `v11re`
+
+## 2026-05-24 `v11rxc` pressure-tail follow-up
+
+- Mainline moved from the old `6300031` tail problem to the `v11rxc` pressure-tail problem around `5200015`.
+- Current best static wrapper surface is:
+  - `configs/v11/方案N15_v11rxc中距generic限宏型评估探针.json`
+- Checked static result on `ep112` under `N15`:
+  - preserves the four hard diagonal seeds
+  - pressure20:
+    - `5200008`: `59 / 24`
+    - `5200015`: `244 / 184`
+    - `5200022`: `44 / 14`
+- `N16` and `N17` were both tested and both made `5200015` fail hard, so simple global mid-band caps are too coarse.
+- Short PPO continuation on top of `N15` pressure seeds was tested:
+  - launcher: `tools/启动_v11rxc_N15_pressure短训_v1002.sh`
+  - runs:
+    - `runs/v11rxc_n15_pressure_tail_tiny`
+    - `runs/v11rxc_n15_pressure_tail_micro64`
+  - seed pool:
+    - `5200015,5200015,5200008,5200022`
+  - result:
+    - preserves the four hard seeds
+    - pressure20 is behavior-identical to static `N15`
+    - `5200015` does not move at all
+- Structural interpretation:
+  - reward tuning / short PPO continuation is now exhausted on this tail
+  - the remaining issue is a long-loop mid-band attractor under `N15`, not the wrong generic macro type set
+  - under `N15`, `5200015` still emits a long repeated chain using only `{2,3,6}`
+
+### New targeted teacher probe
+
+- Added launcher:
+  - `tools/启动_v11rxc_N15基座融合N5压力teacher_v1002.sh`
+- Purpose:
+  - keep base/train/eval surface on `N15`
+  - export a specialist pressure teacher on explicit seeds under `N5`
+  - constrain anchor updates to only the macro logits slice
+- Defaults:
+  - resume/base model = `v11rxc ep112`
+  - normal base dataset = `ep112 + N15 normal`
+  - pressure base dataset = `ep112 + N15 pressure`
+  - specialist dataset = `ep112 + N5 pressure` on `5200015,5200015,5200022`
+  - anchor trainable mode = `macro_slice_only`
+
+### Checked result: `v11rxc_n15_anchor_n5_pressure5200015_tiny`
+
+- Run:
+  - `runs/v11rxc_n15_anchor_n5_pressure5200015_tiny`
+- Teacher export sizes:
+  - normal `N15`: `608` samples / `24` episodes
+  - pressure `N15`: `735` samples / `24` episodes
+  - specialist pressure `N5`: `219` samples / `3` episodes
+- Training:
+  - `tiny`
+  - anchor mode = `macro_slice_only`
+  - macro slice = `(7, 15)`
+- Gate result:
+  - hard diagonal seeds unchanged and all successful:
+    - `6300031`: `54 / 1`
+    - `6300058`: `76 / 20`
+    - `6300069`: `71 / 17`
+    - `6300006`: `132 / 73`
+  - pressure20 unchanged from static `N15`, including:
+    - `5200008`: `59 / 24`
+    - `5200015`: `244 / 184`
+    - `5200022`: `44 / 14`
+  - normal20 score unchanged:
+    - `117.755`
+
+### Updated conclusion
+
+- `N5` pressure teacher traces are not enough by themselves to pull the `N15`/`ep112` policy off the current pressure-tail attractor, even when:
+  - the specialist dataset is explicit pressure seeds
+  - anchor updates are restricted to the macro slice only
+- So the blocker is stronger than “inject a few better `5200015` trajectories.”
+- The next useful lever should likely be one of:
+  - stronger specialist supervision volume on the pressure tail
+  - a training path that directly increases occupancy on the `5200015` line rather than only offline teacher replay
+  - or a more local wrapper/policy semantic change targeted at the repeating mid-band chain itself
+
+### New pressure-tail diagnosis from step traces
+
+- `tools/debug_v11rx_single_seed_trace.py` was extended to support:
+  - `--scenario pressure`
+  - wrapper debug fields for:
+    - `policy_macro_suppressed`
+    - `policy_macro_armed`
+    - `policy_macro_clear_rearm_triggered`
+    - `policy_macro_rearm_count`
+    - `policy_macro_rearm_pending`
+    - `stuck_macro_mid_trigger_count`
+    - `wrapper_distance`
+- Pressure traces were exported for `ep112` under both `N15` and `N5` on:
+  - `5200015`
+  - `5200008`
+  - `5200022`
+- Key behavioral finding:
+  - under `N15`, `5200015` is not failing because macros never trigger
+  - it fails because the policy keeps requesting macro `6`, those requests are suppressed almost the whole episode, and the fallback generic stuck macros are locked into the mid-band set `{2,3,6}`
+- Concrete trace evidence:
+  - `N15 + 5200015`
+    - `244` steps / `184` collisions
+    - `policy_macro_suppressed_steps = 235`
+    - `generic_trigger_steps = 31`
+    - effective macro counts:
+      - `2: 11`
+      - `3: 7`
+      - `6: 13`
+    - no targeted trigger activity
+  - `N5 + 5200015`
+    - `91` steps / `51` collisions
+    - `policy_macro_suppressed_steps = 82`
+    - `generic_trigger_steps = 9`
+    - effective macro counts include the extra escape types absent from `N15`:
+      - `1: 2`
+      - `4: 1`
+      - `7: 1`
+- Contrast seeds:
+  - `N15 + 5200008`
+    - `59 / 24`
+    - only `3` generic triggers
+    - `stuck_macro_mid_trigger_count` never exceeds `2`
+  - `N15 + 5200022`
+    - `44 / 14`
+    - only `4` generic triggers
+    - `stuck_macro_mid_trigger_count` never exceeds `1`
+- So `5200015` is structurally different:
+  - it enters a very long suppressed-policy + mid-band-generic loop
+  - the loop persists for extremely high `stuck_time` and `mid_trigger_count`
+  - but the current `N15` generic fallback never leaves `{2,3,6}`
+
+### Checked local wrapper follow-up: `N18`
+
+- Added wrapper support in `benchmark_state_dims_10k.py` for narrower targeted stuck control:
+  - `targeted_stuck_macro_max_distance_threshold`
+  - `targeted_stuck_macro_mid_trigger_count_threshold`
+  - `targeted_stuck_macro_allow_after_suppressed_policy`
+- Added static probe config:
+  - `configs/v11/方案N18_v11rxc中距长链后定向替代宏评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距长链后定向替代宏_v1002.sh`
+- `N18` idea:
+  - keep the `N15` mid-band generic restriction
+  - only after a long mid-band chain, allow a targeted `{1,4,7}` replacement set
+  - and allow that targeted branch to take over even after a policy macro request was suppressed
+- Checked result:
+  - gate is still behavior-identical to `N15`
+  - four hard diagonal seeds remain preserved
+  - pressure20 remains unchanged, including:
+    - `5200015 = 244 / 184`
+    - `5200008 = 59 / 24`
+    - `5200022 = 44 / 14`
+    - `normal20 score = 117.755`
+- Interpretation:
+  - a light local targeted branch is still too weak to move the `N15` pressure-tail attractor
+  - the remaining blocker is now more specifically:
+    - policy repeatedly asks for macro `6`
+    - release-gate suppression stays active
+    - generic fallback keeps re-entering the same mid-band `{2,3,6}` loop
+  - so the next move should not be more tiny threshold edits on the same targeted branch
+  - the next stronger candidates are:
+    - directly changing suppressed-policy macro handling in this specific long-loop context
+    - or a stronger occupancy/training method that can actually rewrite the `5200015` attractor instead of nudging it
+
+### Checked local wrapper follow-up: `N19`
+
+- Added stronger suppressed-policy override support in `benchmark_state_dims_10k.py`:
+  - `suppressed_policy_macro_override_prob`
+  - `suppressed_policy_macro_distance_threshold`
+  - `suppressed_policy_macro_max_distance_threshold`
+  - `suppressed_policy_macro_stuck_time_threshold`
+  - `suppressed_policy_macro_mid_trigger_count_threshold`
+  - `suppressed_policy_macro_choices`
+  - `suppressed_policy_macro_weights`
+- Added static probe config:
+  - `configs/v11/方案N19_v11rxc中距抑制宏长链覆写评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距抑制宏长链覆写_v1002.sh`
+- `N19` idea:
+  - keep the `N15` surface
+  - when policy macro is suppressed in the long mid-band `5200015` loop, directly override to `{1,4,7}`
+- Important correction discovered later:
+  - the first `N19/N20/N21` “inert” readings were not trustworthy on `v11rxc`
+  - root cause: `observable12_target8_macro_library_v11rxc_stage2` actually runs through `Observable12MacroLibraryV11RxContextWrapper -> Observable12MacroLibraryV11RxWrapper.step()`
+  - that `RxWrapper.step()` had not been updated to use the newly added suppressed-policy override / redirect / passthrough logic
+  - so those early probes were mostly exercising stale `v11rxc` runtime logic
+- After fixing `Observable12MacroLibraryV11RxWrapper.step()` to match the new suppressed-policy handling surface, `N19` became the first strong pressure-tail positive:
+  - four hard diagonal seeds remain preserved
+  - pressure20 improves to:
+    - `avg_steps = 27.45`
+    - `avg_collision_count = 7.95`
+    - `avg_abs_angle_error_deg = 17.38`
+    - `avg_still_step_rate = 0.1143`
+    - `avg_max_still_run = 2.75`
+  - `normal20 score` remains `117.755`
+  - the key target seed moves from `244 / 184` to:
+    - `5200015 = 61 / 32`
+    - seed angle there is `26.84 deg`
+  - `5200008` and `5200022` remain preserved:
+    - `5200008 = 59 / 24`
+    - `5200022 = 44 / 14`
+  - `5200015` trace summary under the fixed runtime:
+    - `steps = 61`
+    - `collision_steps = 32`
+    - `recovery_segments = 4`
+    - `generic_trigger_steps = 6`
+    - `policy_macro_suppressed_steps = 52`
+    - `suppressed_override_steps = 1`
+    - effective macro counts include a new escape type:
+      - `1: 1`
+      - `2: 1`
+      - `3: 2`
+      - `6: 3`
+- Interpretation:
+  - this is now the strongest checked static `v11rxc ep112` wrapper surface on the `5200015` tail
+  - the real blocker was not “wrapper edits cannot move the tail,” but that the real `v11rxc` execution path had not been wired to the new logic
+
+### Checked local wrapper follow-up: `N20`
+
+- Added stronger generic-path redirect support in `benchmark_state_dims_10k.py`:
+  - `suppressed_policy_generic_redirect_prob`
+  - `suppressed_policy_generic_redirect_distance_threshold`
+  - `suppressed_policy_generic_redirect_max_distance_threshold`
+  - `suppressed_policy_generic_redirect_stuck_time_threshold`
+  - `suppressed_policy_generic_redirect_mid_trigger_count_threshold`
+  - `suppressed_policy_generic_redirect_choices`
+  - `suppressed_policy_generic_redirect_weights`
+- Added extra trace field in `tools/debug_v11rx_single_seed_trace.py`:
+  - `suppressed_policy_generic_redirect_triggered`
+- Added static probe config:
+  - `configs/v11/方案N20_v11rxc中距抑制宏长链重定向评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距抑制宏长链重定向_v1002.sh`
+- `N20` idea:
+  - do not rely on a separate pre-generic override branch
+  - instead, when the suppressed-policy long-loop context reaches a generic fallback trigger, redirect that trigger from the old mid-band `{2,3,6}` set to `{1,4,7}`
+- Status after the `RxWrapper.step()` fix:
+  - the old “inert” `N20` conclusion is also invalidated for the same reason as `N19`
+  - corrected `N20` has now been re-run on the real `v11rxc` runtime
+  - four hard diagonal seeds remain preserved
+  - pressure20 improves relative to baseline, but is still weaker than corrected `N19`:
+    - `avg_steps = 31.75`
+    - `avg_collision_count = 11.25`
+    - `avg_abs_angle_error_deg = 17.60`
+    - `avg_max_still_run = 3.25`
+  - `normal20 score` remains `117.755`
+  - `5200015` improves to:
+    - `147 / 98`
+  - corrected `5200015` trace summary:
+    - `recovery_segments = 12`
+    - `generic_trigger_steps = 20`
+    - `suppressed_policy_generic_redirect_steps = 9`
+    - `policy_macro_suppressed_steps = 138`
+    - effective macro counts:
+      - `1: 3`
+      - `2: 2`
+      - `3: 4`
+      - `4: 3`
+      - `6: 5`
+      - `7: 3`
+- Interpretation:
+  - generic-path redirect is a real, working lever after the `RxWrapper` fix
+  - but it is clearly dominated by corrected `N19` on the target tail and on aggregate pressure metrics
+
+### Checked direct release-gate branch: `N21`
+
+- Added direct suppressed-policy macro passthrough support in `benchmark_state_dims_10k.py`:
+  - `suppressed_policy_macro_passthrough_prob`
+  - `suppressed_policy_macro_passthrough_bins`
+  - `suppressed_policy_macro_passthrough_distance_threshold`
+  - `suppressed_policy_macro_passthrough_max_distance_threshold`
+  - `suppressed_policy_macro_passthrough_stuck_time_threshold`
+  - `suppressed_policy_macro_passthrough_mid_trigger_count_threshold`
+- Added static probe config:
+  - `configs/v11/方案N21_v11rxc中距抑制宏6长链放行评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距抑制宏6长链放行_v1002.sh`
+- `N21` idea:
+  - do not replace suppressed macro `6`
+  - in the long-loop window, let the policy’s own requested macro `6` pass the release gate directly
+- Checked result on the fixed runtime:
+  - four hard diagonal seeds remain preserved
+  - pressure20 improves strongly:
+    - `avg_steps = 30.85`
+    - `avg_collision_count = 9.95`
+    - `avg_abs_angle_error_deg = 18.06`
+  - `5200015 = 129 / 72`
+  - `5200015` trace shows:
+    - `suppressed_policy_macro_passthrough_steps = 3`
+    - `policy_macro_suppressed_steps = 117`
+    - `generic_trigger_steps = 14`
+- Interpretation:
+  - direct release-gate handling is a real lever on this tail
+  - but plain macro-6 passthrough is weaker than corrected `N19`
+
+### Checked direct release-gate branch: `N22`
+
+- Added a more conservative config:
+  - `configs/v11/方案N22_v11rxc中距抑制宏6后段放行评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距抑制宏6后段放行_v1002.sh`
+- `N22` idea:
+  - keep `N21` passthrough, but raise the mid-trigger threshold so only the later loop phase is allowed through
+- Checked result:
+  - four hard diagonal seeds remain preserved
+  - pressure20 remains better than baseline:
+    - `avg_steps = 31.2`
+    - `avg_collision_count = 10.75`
+    - `avg_abs_angle_error_deg = 17.46`
+  - `5200015 = 136 / 88`
+  - seed angle there improves relative to `N21`:
+    - `28.33 deg` vs `40.41 deg` on `N21`
+  - `5200015` trace shows:
+    - `suppressed_policy_macro_passthrough_steps = 12`
+    - effective macro counts:
+      - `6: 19`
+      - `2: 2`
+      - `3: 2`
+- Interpretation:
+  - later-only passthrough gives a nicer angle tradeoff than `N21`
+  - but corrected `N19` is still stronger overall on steps/collisions
+
+### Checked short PPO continuation: `v11rxc_n19_pressure_tail_tiny`
+
+- Added launcher:
+  - `tools/启动_v11rxc_N19_pressure短训_v1002.sh`
+- Setup:
+  - resume model = `v11rxc ep112`
+  - overrides = `N19`
+  - seed pool = `5200015,5200015,5200008,5200022`
+  - tiny schedule from `train_target8_v11rxc_pressure_seed_curriculum.py`
+- Checked result:
+  - training completes through `32` episodes
+  - final gates are behavior-identical to static `N19`
+  - so tiny continuation does not yet move the policy beyond what the corrected `N19` wrapper already provides
+- Interpretation:
+  - the current strongest new signal is the corrected `N19` wrapper surface itself
+  - short PPO continuation on top of that surface is again behaviorally inert
+
+### Checked stronger PPO continuation: `v11rxc_n19_pressure_tail_micro_heavy5200015`
+
+- Setup:
+  - same trainer = `train_target8_v11rxc_pressure_seed_curriculum.py`
+  - same wrapper surface = `N19`
+  - stronger occupancy than the earlier tiny run:
+    - schedule = `--micro` (`64` episodes)
+    - seed pool = `5200015,5200015,5200015,5200015,5200008,5200022`
+- Checked result:
+  - final gates are still behavior-identical to static `N19`
+  - hard diagonal seeds remain preserved
+  - pressure20 remains unchanged, including:
+    - `5200015 = 61 / 32`
+    - `5200008 = 59 / 24`
+    - `5200022 = 44 / 14`
+  - `normal20 score` remains `117.755`
+- Interpretation:
+  - even materially increasing `5200015` occupancy inside the current pressure-seed PPO curriculum still does not absorb the corrected `N19` wrapper behavior into the policy
+  - this makes the next training branch narrower:
+    - stop spending more cycles on the current plain pressure-seed PPO curriculum
+    - if continuing training-side work, switch to a different absorption mechanism rather than just “more of the same” with longer or heavier seed-pool duplication
+
+### Checked constrained online pressure absorption: `v11rxc_n19_pressure_constrained_tiny`
+
+- New files:
+  - `train_target8_v11rxc_pressure_constrained_online_finetune.py`
+  - `tools/启动_v11rxc_N19压力受限在线微调_v1002.sh`
+- Purpose:
+  - test a genuinely different absorption mechanism from the plain pressure-seed PPO curriculum
+  - keep the online pressure-seed environment on `N19`, but restrict learning to a small structured parameter block instead of updating the full policy
+- Setup:
+  - resume model = `v11rxc ep112`
+  - wrapper surface = `N19`
+  - seed pool = `5200015,5200015,5200008,5200022`
+  - `trainable_param_mode = action_net_only`
+  - trainable params = `1935`
+  - schedule = `--tiny`
+- Checked result:
+  - final gates are again behavior-identical to static `N19`
+  - hard diagonal seeds remain preserved
+  - pressure20 remains unchanged, including:
+    - `5200015 = 61 / 32`
+    - `5200008 = 59 / 24`
+    - `5200022 = 44 / 14`
+  - `normal20 score` remains `117.755`
+- Interpretation:
+  - on the corrected `N19` pressure-tail line, constraining updates to the action head is still too weak a lever to absorb the wrapper behavior
+  - this extends the earlier diagonal-side conclusion of the constrained-online family into the pressure-tail setting:
+    - “small parameter-mask online PPO” is likely not the right absorption mechanism here either
+
+### Checked pressure hybrid-anchor absorption: `v11rxc_n19_pressure_hybrid_anchor_tiny`
+
+- New files:
+  - `train_target8_v11rxc_pressure_hybrid_anchor_finetune.py`
+  - `tools/启动_v11rxc_N19压力hybrid_anchor短训_v1002.sh`
+- Purpose:
+  - test a stronger dataset-driven absorption mechanism than plain pressure-seed PPO or constrained-online
+  - unlike the old diagonal/bad-seed hybrid-anchor shell, keep the online environment itself on pressure seeds
+  - use only:
+    - `normal base` anchor dataset
+    - `N19 pressure specialist` dataset
+- Checked exported teacher datasets:
+  - normal anchor dataset:
+    - `24` episodes
+    - `515` samples
+  - pressure specialist dataset:
+    - seeds = `5200015,5200015,5200008,5200022`
+    - `4` episodes
+    - `225` samples
+- Setup:
+  - resume model = `v11rxc ep112`
+  - wrapper surface = `N19`
+  - online seed pool = `5200015,5200015,5200008,5200022`
+  - anchor dataset roles = `base,specialist`
+  - anchor dataset weights = `1.0,1.8`
+  - `anchor_trainable_param_mode = all`
+  - schedule = `--tiny`
+- Checked result:
+  - anchor loss moves smoothly:
+    - `2.416904 -> 2.387657 -> 2.358338 -> 2.328959`
+  - but final gates are still behavior-identical to static `N19`
+  - hard diagonal seeds remain preserved
+  - pressure20 remains unchanged, including:
+    - `5200015 = 61 / 32`
+    - `5200008 = 59 / 24`
+    - `5200022 = 44 / 14`
+  - `normal20 score` remains `117.755`
+- Interpretation:
+  - this is a stronger negative result than the plain PPO and constrained-online probes:
+    - even when both the online rollout distribution and the offline anchor dataset are aligned to the pressure-tail objective, the current tiny pressure hybrid-anchor shell still does not absorb the corrected `N19` wrapper behavior into the policy
+  - so the next useful training-side lever is likely not “more of the same shell with slightly different weights”
+  - if continuing training-side work, the next branch should be a more structural mechanism shift again, not another small retune of this tiny pressure hybrid-anchor recipe
+
+### Checked combination branch: `N23`
+
+- Added config:
+  - `configs/v11/方案N23_v11rxc中距覆写加后段放行评估探针.json`
+- Added evaluator:
+  - `tools/评估_v11rxc_ep112中距覆写加后段放行_v1002.sh`
+- `N23` idea:
+  - combine corrected `N19` suppressed override with the later-only macro-6 passthrough used in `N22`
+- Checked result:
+  - gates are behavior-identical to corrected `N19`
+  - four hard diagonal seeds remain preserved
+  - pressure20 is exactly the same as corrected `N19`
+  - `5200015` remains:
+    - `61 / 32`
+  - corrected `5200015` trace shows:
+    - `suppressed_override_steps = 1`
+    - `suppressed_policy_macro_passthrough_steps = 0`
+- Interpretation:
+  - once the corrected `N19` override already fires, the added late passthrough branch does not contribute any extra behavior
+  - so `N23` collapses back to `N19`, which keeps `N19` as the cleanest current mainline candidate
+
+### New no-wrapper base-family check on `N9`
+
+- Motivation:
+  - after the `N19` absorption family stayed inert on no-wrapper `N9`,
+    the next real question was whether `ep112` itself was the bottleneck
+  - this check evaluates different existing `v11rxc` bases directly on the same `N9` no-wrapper surface,
+    before adding any new absorption shell
+
+- `v11rxc_tiny64_nowrapper_n9_eval`
+  - model:
+    - `runs/v11rxc_nlite125_fix6300031_targeted_far6_stuck10_tiny64/.../rppo_medium_lstm128x2_observable12_target8_macro_library_v11rxc_stage2.zip`
+  - checked result:
+    - pressure20 improves materially relative to `ep112` baseline:
+      - `avg_steps = 28.25`
+      - `avg_collision_count = 8.9`
+      - `avg_abs_angle_error_deg = 15.75`
+      - tail seeds:
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+    - normal20 also improves slightly:
+      - score `116.226`
+    - but the diagonal frontier collapses badly:
+      - badseed success `0.25`
+      - only `6300006` stays solved
+  - interpretation:
+    - this is the first direct proof in the current pressure-tail line that a different `v11rxc` base family can move the no-wrapper `N9` tail in the desired direction
+    - the blocker is no longer “all non-wrapper pressure behavior is inert”
+    - the blocker is now a real base tradeoff:
+      - `tiny64` has the better raw pressure surface
+      - but not the diagonal hard-seed robustness
+
+- `v11rxc_rl125_nowrapper_n9_eval`
+  - model:
+    - `runs/v11rxc_nlite125_fix6300031_targeted_far6_stuck10_rl125/.../rppo_medium_lstm128x2_observable12_target8_macro_library_v11rxc_stage2.zip`
+  - checked result:
+    - aggregate metrics are behavior-identical to the old `ep112` no-wrapper baseline:
+      - pressure20 `29.0 / 9.1 / 16.55`
+      - normal20 score `115.601`
+      - badseed success `0.75`
+    - tail seeds remain on the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+  - interpretation:
+    - “learned `6300031` branch” does not automatically imply better raw pressure-tail behavior on `N9`
+    - the useful pressure signal is specific to `tiny64`, not generic to all later `v11rxc` checkpoints
+
+### Checked reverse-direction repair from the pressure-good base
+
+- `v11rxc_tiny64_anchor_ep112_diag4_tiny`
+  - launcher:
+    - `tools/启动_v11rxc_hybrid_anchor短训_v1002.sh`
+  - setup:
+    - resume/base/normal/pressure model = `tiny64`
+    - specialist model = `ep112`
+    - specialist seed pool = `6300031,6300058,6300069,6300006`
+    - online bad-seed pool = `6300031,6300058,6300069,6300006`
+    - schedule = `--tiny`
+  - checked result:
+    - anchor loss moves:
+      - `2.549417 -> 2.521485 -> 2.493467 -> 2.465372`
+    - badseed gate improves from raw `tiny64`, but lands on the old base-dominant attractor:
+      - `6300031` regresses back to fail (`260 / 204`)
+      - `6300058` success (`83 / 28`)
+      - `6300069` success (`158 / 96`)
+      - `6300006` success (`130 / 67`)
+      - badseed success `0.75`
+    - pressure edge from raw `tiny64` is not preserved:
+      - `5200008 = 42 / 8`
+      - `5200015 = 75 / 34`
+      - `5200022 = 32 / 10`
+      - aggregate pressure20 degrades to about `30.0` steps / `9.05` collisions
+    - normal20 also collapses to the earlier safe-side line:
+      - score `108.900`
+  - interpretation:
+    - reversing the hybrid-anchor direction does not escape the same family failure mode
+    - the current shell can pull `tiny64` back toward the old diagonal-safe attractor,
+      but it cannot preserve the raw no-wrapper pressure advantage that made `tiny64` interesting
+    - this rules out another nearby “just change the direction of the same anchor shell” idea
+
+- `v11rxc_tiny64_diag4_all_16ep`
+  - launcher:
+    - `tools/启动_v11rxc受限在线微调_v1002.sh`
+  - setup:
+    - resume model = `tiny64`
+    - training/eval surface = `configs/v11/方案N9_v11rxc近N6但wrapper不注入macro6评估探针.json`
+    - online seed pool = `6300031,6300058,6300069,6300006`
+    - `trainable_param_mode = all`
+    - learning rate = `2e-5`
+    - stage episodes = `16`
+  - checked result:
+    - behavior is already identical to the old `ep112/rl125` no-wrapper attractor:
+      - badseed success `0.75`
+      - `6300031 = 54 / 1`
+      - `6300058 = 260 / 223`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+      - pressure20 returns to:
+        - `5200008 = 100 / 48`
+        - `5200015 = 61 / 33`
+        - `5200022 = 44 / 14`
+      - normal20 score returns to `115.601`
+  - interpretation:
+    - unlike the old `ep112` pressure-tail probes, this shell is not inert on `tiny64`
+    - but it moves in the wrong direction immediately:
+      - direct diagonal PPO repair from `tiny64` already destroys the raw pressure edge by `16ep`
+
+- `v11rxc_tiny64_diag4_all_tiny`
+  - same launcher and setup as above, but:
+    - stage episodes = `32`
+  - checked result:
+    - behavior is exactly identical to `v11rxc_tiny64_diag4_all_16ep`
+    - same badseed gate
+    - same pressure20 aggregate and tail seeds
+    - same normal20 score `115.601`
+  - interpretation:
+    - there is no visible short early-stop window on this direct repair shell
+    - this rules out another nearby idea:
+      - “keep the same direct tiny64 diagonal PPO shell, but stop earlier”
+
+- `v11rxc_tiny64_diag4_then_n9_mergeback`
+  - launcher:
+    - `tools/启动_v11rxc_tiny64两阶段diag4回拉_v1002.sh`
+  - purpose:
+    - test a structurally different `tiny64` repair shell from both direct PPO and anchor pull
+    - phase1 tries to repair diagonal hard seeds directly from `tiny64`
+    - phase2 then uses the same `N9/no-wrapper` surface as a generic mergeback stage to recover the raw pressure occupancy
+  - setup:
+    - resume model = `tiny64`
+    - `phase1`:
+      - seed pool = `6300031,6300058,6300069,6300006`
+      - episodes = `16`
+      - overrides = `configs/v11/方案N9_v11rxc近N6但wrapper不注入macro6评估探针.json`
+    - `phase2`:
+      - episodes = `32`
+      - overrides = same `N9/no-wrapper`
+      - `phase2_bad_seed_ratio = 0.0`
+      - meaning: pure generic mergeback under the same no-wrapper surface, not another bad-seed replay pass
+  - checked result:
+    - final behavior is still exactly the same old no-wrapper attractor:
+      - badseed success `0.75`
+      - `6300031 = 54 / 1`
+      - `6300058 = 260 / 223`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+      - pressure20 returns to:
+        - `5200008 = 100 / 48`
+        - `5200015 = 61 / 33`
+        - `5200022 = 44 / 14`
+      - normal20 score returns to `115.601`
+  - interpretation:
+    - this is a stronger negative result than either of the previous two `tiny64` repair probes
+    - the current failure is not specific to:
+      - teacher anchoring
+      - or a one-stage diagonal PPO shell
+    - even after explicitly adding a generic `N9` mergeback phase, the model still converges to the same old `0.75 / 115.601` attractor
+    - that means the current `tiny64` repair problem is now clearly family-level across the existing trainer shells
+    - continuing to retune any nearby variant of these same three shells is unlikely to produce new behavior:
+      - reverse hybrid-anchor
+      - direct diagonal PPO
+      - diag4 -> generic mergeback
+
+- `v11rxc_tiny64_targeted_far6_eval`
+  - purpose:
+    - check whether the old `targeted_far6` surface itself is still the strongest structural diagonal repair lever on top of `tiny64`
+  - setup:
+    - model = `tiny64`
+    - eval surface = `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+  - checked result:
+    - this is the strongest static diagonal repair seen on `tiny64`:
+      - badseed success `1.0`
+      - `6300031 = 127 / 65`
+      - `6300058 = 83 / 28`
+      - `6300069 = 158 / 96`
+      - `6300006 = 110 / 54`
+    - but it still gives up the raw pressure edge relative to no-wrapper `tiny64`:
+      - pressure20 around `30.0` steps / `9.05` collisions
+      - `5200015 = 75 / 34`
+      - `5200008 = 42 / 8`
+      - `5200022 = 32 / 10`
+      - normal20 score `108.946`
+  - interpretation:
+    - the old `targeted_far6` wrapper semantics remain behaviorally active and are stronger than the nearby `N5/N15/N19` static surfaces for diagonal repair on `tiny64`
+    - but this is still only a wrapper-side repair, not yet a policy-side merge
+
+- `v11rxc_tiny64_targeted_far6_fix6300031_tiny`
+  - launcher:
+    - `tools/启动_v11rxc_tiny64_targeted_far6修6300031_v1002.sh`
+  - setup:
+    - resume model = `tiny64`
+    - training surface = `configs/v11/方案Nlite_v11rxc修6300031远距定向macro6探针.json`
+    - training seed pool = only `6300031`
+    - episodes = `64`
+    - eval surface = `configs/v11/方案N9_v11rxc近N6但wrapper不注入macro6评估探针.json`
+  - checked result:
+    - once evaluated back on `N9`, behavior still collapses exactly to the old attractor:
+      - badseed success `0.75`
+      - `6300031 = 54 / 1`
+      - `6300058 = 260 / 223`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+      - pressure20 returns to:
+        - `5200008 = 100 / 48`
+        - `5200015 = 61 / 33`
+        - `5200022 = 44 / 14`
+      - normal20 score `115.601`
+  - interpretation:
+    - this is an important new negative result:
+    - the issue is not merely that we had been using the wrong `tiny64` training surface
+    - even continuing `tiny64` on the most behaviorally active diagonal-repair surface we currently know,
+      then evaluating back on `N9`, still fails to preserve any improved merged policy
+    - so the current `tiny64` bottleneck is now stronger than:
+      - wrong anchor direction
+      - wrong direct PPO shell
+      - wrong generic mergeback shell
+      - or wrong diagonal repair wrapper surface
+
+- `v11rxc_tiny64_targeted_far6_distill_tiny`
+  - launcher:
+    - `tools/启动_v11rxc_tiny64_targeted_far6蒸馏回灌_v1002.sh`
+  - purpose:
+    - test the first genuinely different `tiny64` absorption family from the current online shells
+    - keep raw `tiny64` normal + pressure behavior as base datasets on `N9`
+    - inject diagonal specialist supervision from `tiny64 + targeted_far6`
+    - but supervise that specialist using `effective_macro` labels rather than raw policy labels
+  - setup:
+    - resume/base/normal/pressure/specialist model = `tiny64`
+    - base datasets:
+      - `normal + N9/no-wrapper + policy labels`
+      - `pressure + N9/no-wrapper + policy labels`
+    - specialist dataset:
+      - `diagonal + targeted_far6 + effective_macro labels`
+      - seed pool = `6300031,6300058,6300069,6300006`
+    - loss decomposition:
+      - base = `all`
+      - specialist = `macro_only`
+    - first checked trainable mode:
+      - `macro_slice_only`
+      - trainable params = `1935`
+  - checked result:
+    - training loss moves cleanly across epochs
+    - but behavior stays essentially on the raw `tiny64` line:
+      - badseed success `0.25`
+      - `6300031` still fails
+      - pressure tail remains on the good raw `tiny64` line:
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+      - normal20 score `116.180`
+  - interpretation:
+    - unlike the online shells, this family does not snap back to the old `0.75 / 115.601` attractor
+    - but it still fails the actual merge objective because the specialist diagonal signal is effectively inert
+
+- `v11rxc_tiny64_targeted_far6_distill_actionnet`
+  - same launcher and dataset structure as above, but stronger settings:
+    - `trainable_param_mode = action_net_only`
+    - heavier specialist weight
+    - more epochs
+  - checked result:
+    - still behavior-identical to `v11rxc_tiny64_targeted_far6_distill_tiny`
+    - same badseed gate
+    - same pressure tail
+    - same normal20 score
+  - interpretation:
+    - the current `tiny64 targeted_far6 effective-macro BC` family is now characterized more clearly:
+      - it preserves the raw pressure-good base
+      - but it does not write the diagonal specialist signal into the policy
+    - widening from `macro_slice_only` to `action_net_only` is still not enough to make it move
+
+- Updated interpretation from these new offline checks:
+  - the current `tiny64` repair search now splits cleanly into two failure modes:
+    - online families:
+      - hybrid-anchor
+      - direct PPO
+      - two-stage mergeback
+      - targeted-surface continuation
+      - all move too much and collapse to the old `0.75 / 115.601` attractor
+    - offline targeted-far6 BC families:
+      - `macro_slice_only`
+      - `action_net_only`
+      - both move too little and stay essentially on raw `tiny64`
+  - that means the next useful `tiny64` mechanism is likely something in between:
+    - stronger than the current BC recipe
+    - but less attractor-seeking than the current online PPO families
+
+- Updated interpretation from these new checks:
+  - base search is now a live lever again on the pressure-tail problem
+  - `tiny64` is the first confirmed pressure-good no-wrapper base on `N9`
+  - but the current anchor family is still the wrong merge mechanism:
+    - `ep112 -> pressure` was inert
+    - `tiny64 -> diagonal` snaps back to the old safe-side attractor
+  - so the next useful move should be:
+    - keep `tiny64` as the pressure-side reference base
+    - stop iterating the current hybrid-anchor shell in either direction
+    - stop iterating direct diagonal PPO repair from `tiny64` under the same `N9` surface
+    - stop iterating the current two-stage generic mergeback shell from `tiny64` as well
+    - stop iterating “continue tiny64 on targeted_far6 and eval back on N9” as well
+    - stop iterating nearby BC retunes of the same `tiny64 targeted_far6 effective-macro` recipe as well
+    - explicitly treat the remaining gap as a middle-strength merge problem, not a missing surface problem
+    - switch to a more structural merge/repair mechanism if the goal is one policy that keeps both:
+      - `tiny64`-like no-wrapper pressure behavior
+      - and the stronger diagonal hard-seed frontier
+- keep `runs/v11rx_tail2_conservative_lite_125/.../checkpoint_ep_00125.zip` as the current candidate artifact
+- do not spend more cycles on the current online hybrid-anchor recipe unless its structure changes materially
+- next targeted branch should be a narrower offline merge-back recipe:
+  - this specific “tail-only specialist dataset” hypothesis has now been checked and did not fix the collapse
+  - this specific “specialist only contributes macro-head loss” hypothesis has also been checked and did not fix the collapse
+  - this specific “only update macro-related output slices” hypothesis has also now been checked and did not fix the collapse
+  - any further offline merge-back attempt now needs a different mechanism entirely, not just stricter masking of the same BC recipe
+- and the “reverse direction, repair `Nlite-125` from itself on `6300031`” hybrid-anchor hypothesis has also now been checked and did not move behavior
+- and the “pure online RL on only `6300031` from `Nlite-125`” hypothesis has also now been checked and did not move behavior
+- the first promising new direction is no longer optimizer-shell tuning, but changed wrapper exploration surface:
+  - `configs/v11/方案Nlite_v11rx修6300031温和macro6探针.json`
+  - train on that surface
+  - evaluate back on the original `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+  - then narrow the surface because the current version is too global and falls into the known `0.75` attractor
+- config: `configs/v11/方案Nlite_v11rx尾部轻保守探针.json`
+- launchers:
+  - iterative micro: `tools/启动_v11rx尾部轻保守短训_v1002.sh`
+  - fixed early-stop run: `tools/启动_v11rx尾部轻保守125_v1002.sh`
+  - formal re-eval: `tools/评估_v11rx尾部轻保守125_v1002.sh`
+  - checked offline merge-back: `tools/启动_v11rx_conflict4基座融合Nlite125_v1002.sh`
+  - checked macro-head BC variant: `tools/启动_v11rx_conflict4宏头融合Nlite125_v1002.sh`
+- active online mixed-anchor path: `tools/启动_v11rx_hybrid_anchor短训_v1002.sh`
+
+## Latest v11rxc Update
+
+### 2026-05-24: `tiny64` + `N24` middle-strength BC still inert
+
+- The active `v11rxc` line has moved away from the older `v11rx/v11re` merge-back work above.
+- Current pressure-side reference base is:
+  - `runs/v11rxc_nlite125_fix6300031_targeted_far6_stuck10_tiny64/.../rppo_medium_lstm128x2_observable12_target8_macro_library_v11rxc_stage2.zip`
+- Current best local semantic bridge surface is:
+  - `configs/v11/方案N24_v11rxc近N9加远距targeted_far6评估探针.json`
+  - it statically repairs `6300031` while preserving raw `tiny64` pressure and normal behavior under no-wrapper `N9`
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_distill_policyhead`
+  - launcher: `tools/启动_v11rxc_tiny64_n24蒸馏回灌_v1002.sh`
+  - implementation change:
+    - `distill_v11rxc_policy_bc.py` now supports `trainable_param_mode = policy_head_only`
+    - this opens only `mlp_extractor.policy_net + action_net`
+    - trainable params = `34959`
+  - dataset structure:
+    - base datasets:
+      - `normal + N9/no-wrapper + policy labels`
+      - `pressure + N9/no-wrapper + policy labels`
+    - specialist dataset:
+      - `diagonal + N24 + effective_macro labels`
+      - seed pool = `6300031,6300058,6300069,6300006`
+    - loss decomposition:
+      - base = `all`
+      - specialist = `macro_only`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031, 6300058, 6300069` all still fail
+    - pressure tail stays exactly on the raw `tiny64` line:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - this is the first checked middle-width offline block between `action_net_only` and full-policy movement
+    - but behavior is still effectively raw `tiny64`
+    - so broadening the offline BC update from output logits to the full actor MLP is still not enough to inject the diagonal specialist signal
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_driftctl_policyhead`
+  - launcher: `tools/启动_v11rxc_tiny64_n24漂移约束混合微调_v1002.sh`
+  - implementation change:
+    - `train_target8_v11rxc_hybrid_anchor_finetune.py` now supports:
+      - `online_trainable_param_mode`
+      - `policy_head_only`
+      - masked online PPO updates on the same restricted actor-side block
+    - new drift-control recipe:
+      - online PPO runs only on `N24` diagonal hard seeds
+      - between rounds, anchor replay uses only raw `tiny64` `N9` base datasets:
+        - `normal + policy labels`
+        - `pressure + policy labels`
+      - both online PPO and anchor replay are constrained to `policy_head_only`
+      - checked schedule = `4 rounds x 8 PPO episodes + 4 anchor epochs`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031, 6300058, 6300069` still fail
+    - pressure tail stays exactly on the raw `tiny64` line:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - this is the first checked mixed online/offline mechanism with explicit online drift control on `v11rxc`
+    - it still does not move behavior off raw `tiny64`
+    - so the remaining gap is not just “PPO is too unconstrained”; even constrained actor-only PPO plus base occupancy replay is still too weak to write the diagonal repair signal
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_pressure_reg_all`
+  - launcher: `tools/启动_v11rxc_tiny64_n24压力正则坏种子微调_v1002.sh`
+  - implementation change:
+    - new trainer: `train_target8_v11rxc_pressure_regularized_bad_seed.py`
+    - mechanism:
+      - online bad-seed PPO runs directly on `N24`
+      - trainable params = `all`
+      - on every optimizer step, PPO gradients are augmented with a raw `tiny64` `N9 pressure` imitation gradient
+      - checked pressure regularizer setting:
+        - teacher dataset = `pressure + N9/no-wrapper + policy labels`
+        - batch size = `128`
+        - loss heads = `all`
+        - loss weight = `0.6`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031, 6300058, 6300069` still fail
+    - pressure tail stays exactly on the raw `tiny64` line:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - this is the first checked trainer where pressure preservation is inside every PPO update, not only in alternating replay stages
+    - it still does not move behavior off raw `tiny64`
+    - so the remaining gap is not solved by a generic pressure imitation regularizer either
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_all`
+  - launcher: `tools/启动_v11rxc_tiny64_n24分歧正则坏种子微调_v1002.sh`
+  - implementation change:
+    - new trainer: `train_target8_v11rxc_disagreement_regularized_bad_seed.py`
+    - mechanism:
+      - online bad-seed PPO runs directly on `N24`
+      - trainable params = `all`
+      - every PPO optimizer step gets two auxiliary gradients:
+        - pressure regularizer:
+          - raw `tiny64` `N9 pressure` policy labels
+          - loss heads = `all`
+          - loss weight = `0.45`
+        - specialist regularizer:
+          - `N24 diagonal + effective_macro`
+          - but only on rows where teacher macro and raw policy macro disagree
+          - retained disagreement set = `113` samples
+          - loss heads = `macro_only`
+          - loss weight = `1.8`
+  - checked result:
+    - badseed success `0.5`
+    - repaired seeds:
+      - `6300069`
+      - `6300006`
+    - failed seeds:
+      - `6300031`
+      - `6300058`
+    - pressure side regresses sharply toward the old basin:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 53 / 17`
+    - pressure20 aggregate: `30.3` steps, `10.4` collisions, `16.58 deg`
+    - normal20 score `116.219`
+  - interpretation:
+    - this is the first non-inert `tiny64 + N24` merge mechanism
+    - so the “only move on disagreement states” idea is real
+    - but the current weighting/localization is still too coarse:
+      - it moves enough to solve `6300069`
+      - but it drags the pressure tail back toward the old attractor, especially `5200008`
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_pressure3_clean`
+  - implementation:
+    - same disagreement trainer as above
+    - but specialist narrowed to only seed `6300069`
+    - specialist disagreement rows shrink from `113` to `26`
+    - pressure regularizer narrowed to only the collapsed tail seeds:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - pressure dataset shrinks to `134` samples
+  - checked result:
+    - badseed success returns to `0.25`
+    - `6300069` is no longer repaired
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - the disagreement branch has a real but narrow active window
+    - if localization is pushed too hard:
+      - specialist restricted to one seed
+      - and pressure regularizer restricted to only three tail seeds
+      - then the mechanism becomes fully inert again
+    - this means the next step is not “shrink everything further”
+    - it is “keep enough specialist mass to move, while adding a better-shaped counterweight than pure hard narrowing”
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_all_pressure3`
+  - implementation:
+    - keep the same broad disagreement-based specialist branch as `v11rxc_tiny64_n24_disagree_reg_all`
+    - specialist seeds remain full diag4:
+      - `6300031`
+      - `6300058`
+      - `6300069`
+      - `6300006`
+    - specialist disagreement rows remain `113`
+    - but pressure regularizer is narrowed to only:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - pressure dataset size = `134`
+  - checked result:
+    - badseed success `0.75`
+    - solved:
+      - `6300031`
+      - `6300069`
+      - `6300006`
+    - failed:
+      - `6300058`
+    - pressure tail snaps straight back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions, `16.55 deg`
+    - normal20 score `115.601`
+  - interpretation:
+    - this does not produce a useful middle state
+    - it confirms the other side of the active window:
+      - too-narrow specialist + target-pressure-only => inert
+      - full specialist + target-pressure-only => direct snap to old `0.75 / 115.601` attractor
+    - so narrowing only the pressure counterweight is not enough to keep the broad disagreement mechanism off the old basin
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_all_pressure3_nop10_clean`
+  - implementation:
+    - keep the same target-pressure-only counterweight:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - keep full diag4 specialist seeds
+    - but filter specialist disagreement rows further to:
+      - `macro mismatch`
+      - `no_progress_time >= 1.0`
+    - specialist disagreement rows shrink from `113` to `77`
+  - checked result:
+    - badseed success falls back to `0.25`
+    - `6300069` is no longer repaired
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - a simple state-threshold filter on disagreement rows is also too blunt
+    - the lower `no_progress_time` disagreement rows are not merely noise:
+      - removing them removes the only observed repair movement too
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300031_6300069_pressure3`
+  - implementation:
+    - keep the same target-pressure-only counterweight:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - narrow specialist disagreement rows to seeds:
+      - `6300031`
+      - `6300069`
+    - resulting disagreement rows = `62`
+  - checked result:
+    - badseed success `0.75`
+    - solved:
+      - `6300031 = 54 / 1`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+    - failed:
+      - `6300058 = 260 / 223`
+    - pressure tail still snaps to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate:
+      - success `1.0`
+      - avg steps `29.0`
+      - avg collisions `9.1`
+      - avg_abs_angle_error_deg `16.55388765335083`
+    - normal20 aggregate:
+      - success `1.0`
+      - avg steps `20.65`
+      - avg collisions `3.2`
+      - score `115.6007663233819`
+  - interpretation:
+    - this closes off the “maybe just use a smaller seed subset” branch
+    - even the intermediate two-seed subset is already enough to pull the policy into the same old `0.75 / 115.601` basin
+    - so the missing ingredient is not simply which specialist seeds are present
+
+- Useful disagreement-row structure for the next filter:
+  - macro-disagreement rows by seed:
+    - `6300031: 36`
+    - `6300058: 32`
+    - `6300069: 26`
+    - `6300006: 19`
+  - macro-disagreement rows by `recovery_mode`:
+    - `0: 63`
+    - `1: 3`
+    - `2: 6`
+    - `3: 3`
+    - `4: 4`
+    - `5: 2`
+    - `6: 22`
+    - `7: 10`
+  - per-seed mode support:
+    - `6300031`: `0,2,4,6,7`
+    - `6300058`: `0,1,2,3,5,7`
+    - `6300069`: `0,2,4,5,7`
+    - `6300006`: `0,1,2,6,7`
+  - notable contrast:
+    - `recovery_mode 6` appears in `6300031/6300006`
+    - `recovery_mode 6` is absent from `6300069`
+  - practical next candidate:
+    - keep seeds `6300031,6300069`
+    - keep pressure regularizer on `5200008/5200015/5200022`
+    - but whitelist specialist `recovery_mode = 0,2,4,5,7`
+    - this removes only the `mode 6` rows and leaves `46` disagreement rows:
+      - above the inert `26`-row single-seed case
+      - below the collapsing `62`-row two-seed case
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300031_6300069_rm02457_pressure3`
+  - implementation:
+    - keep seeds:
+      - `6300031`
+      - `6300069`
+    - keep pressure regularizer on:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - whitelist specialist `recovery_mode = 0,2,4,5,7`
+    - resulting disagreement rows = `46`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - removing `mode 6` is too strong
+    - `mode 6` is part of the only currently observed movement path, not just a spill marker
+
+- Implementation change:
+  - `train_target8_v11rxc_disagreement_regularized_bad_seed.py`
+    - new argument: `--specialist-seed-mode-whitelist`
+    - syntax supports seed-specific mode subsets such as:
+      - `6300031:6+6300069:*`
+  - `tools/启动_v11rxc_tiny64_n24分歧正则坏种子微调_v1002.sh`
+    - now forwards `SPECIALIST_SEED_MODE_WHITELIST`
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_pressure3_v3`
+  - implementation:
+    - use the new seed-specific mode filter:
+      - keep all rows from `6300069`
+      - keep only `recovery_mode 6` rows from `6300031`
+    - pressure regularizer still only protects:
+      - `5200008`
+      - `5200015`
+      - `5200022`
+    - resulting disagreement rows = `42`
+  - checked result:
+    - badseed success `0.75`
+    - solved:
+      - `6300031 = 54 / 1`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+    - failed:
+      - `6300058 = 260 / 223`
+    - pressure tail snaps back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions, `16.55 deg`
+    - normal20 score `115.601`
+  - interpretation:
+    - `6300031 mode 6` alone is already enough to reactivate the old-attractor collapse
+    - the remaining problem is now inside a much smaller slice than “all rows from `6300031`”
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop06_pressure3`
+  - implementation:
+    - keep the same seed-specific mode subset:
+      - `6300069:*`
+      - `6300031:6`
+    - add `min_no_progress_time = 0.6`
+    - disagreement rows shrink from `42 -> 36`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail again
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.226`
+  - interpretation:
+    - the active window now appears to sit inside a very small low-`no_progress_time` slice of `6300031 mode 6`
+    - `42` rows still collapse
+    - `36` rows are already inert
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop003_pressure3`
+  - implementation:
+    - pre-filter specialist dataset directly
+    - keep all `6300069` disagreement rows
+    - keep only `6300031 mode 6` rows with `no_progress_time in {0.0, 0.3}`
+    - resulting disagreement rows = `31`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - the very lowest `6300031 mode 6` slice alone is not enough to move
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop06only_pressure3`
+  - implementation:
+    - pre-filter specialist dataset directly
+    - keep all `6300069` disagreement rows
+    - keep only `6300031 mode 6` rows with `no_progress_time = 0.6`
+    - resulting disagreement rows = `31`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - interpretation:
+    - a same-size `31`-row slice at `0.6` is also inert
+    - so the movement is not explained simply by the identity of one specific 5-row bucket
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop009_pressure3`
+  - implementation:
+    - pre-filter specialist dataset directly
+    - keep all `6300069` disagreement rows
+    - keep `6300031 mode 6` rows with `no_progress_time in {0.0, 0.3, 0.6, 0.9}`
+    - resulting disagreement rows = `40`
+  - checked result:
+    - badseed success `0.75`
+    - solved:
+      - `6300031 = 54 / 1`
+      - `6300069 = 69 / 17`
+      - `6300006 = 186 / 123`
+    - failed:
+      - `6300058 = 260 / 223`
+    - pressure tail snaps back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions, `16.55 deg`
+    - normal20 score `115.601`
+  - interpretation:
+    - `40` rows are already enough to collapse back to the old attractor
+    - the active window is now localized to a narrow mass gap:
+      - `36` rows inert
+      - `40` rows collapse
+    - this looks more like a disagreement-mass threshold than a single uniquely important 5-row identity
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop061215_pressure3`
+  - implementation:
+    - pre-filter specialist dataset directly
+    - keep all `6300069` disagreement rows
+    - keep `6300031 mode 6` rows with `no_progress_time in {0.6, 0.9, 1.2, 1.5}`
+    - resulting disagreement rows = `37`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.226`
+  - interpretation:
+    - restoring the missing low-`no_progress` `6300069` row still does not move the policy
+    - so the `36 -> 37` difference is not the decisive trigger
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_38_pressure3`
+  - implementation:
+    - start from the inert `37`-row subset
+    - add back the earliest low `6300031 mode 6` row:
+      - dataset index `139`
+      - `no_progress_time = 0.3`
+    - resulting disagreement rows = `38`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`
+    - normal20 score `116.226`
+  - interpretation:
+    - `38` rows are still inert
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_39_pressure3`
+  - implementation:
+    - same as previous, but add back the first two low `6300031 mode 6` rows:
+      - dataset indices `139, 142`
+    - resulting disagreement rows = `39`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`
+    - normal20 score `116.438`
+  - interpretation:
+    - `39` rows are still inert
+    - the collapse boundary is now tightly bracketed:
+      - `39` rows inert
+      - `40` rows collapse
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w14_pressure3`
+  - implementation:
+    - keep the exact `40`-row specialist subset from `nop009`
+    - lower `SPECIALIST_LOSS_WEIGHT` from `1.6 -> 1.4`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` still fail
+    - pressure side no longer fully snaps to the old line, but does drift on `5200008`:
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.247`
+  - interpretation:
+    - `w = 1.4` is below the activation threshold:
+      - no full collapse
+      - but still no diagonal repair movement
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w15_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.5`
+  - checked result:
+    - badseed success `0.75`
+    - solved:
+      - `6300031 = 66 / 4`
+      - `6300069 = 69 / 17`
+      - `6300006 = 88 / 33`
+    - failed:
+      - `6300058 = 260 / 223`
+    - pressure tail snaps back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions, `16.55 deg`
+    - normal20 score `115.601`
+  - interpretation:
+    - `w = 1.5` is already above the activation threshold
+    - so the useful window, if it exists, now appears to be between:
+      - `39` and `40` rows at fixed `w = 1.6`
+      - and also between `w = 1.4` and `w = 1.5` at fixed `40` rows
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w145_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.45`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` still fail
+    - pressure side drifts further, but still does not snap to the old line:
+      - `5200008 = 48 / 20`
+      - `5200015 = 68 / 38`
+      - `5200022 = 37 / 14`
+    - pressure20 aggregate: `30.05` steps, `10.15` collisions
+    - normal20 score `116.406`
+  - interpretation:
+    - `w = 1.45` is still below the activation threshold
+    - so the useful weight window is narrower still:
+      - `1.45` inert
+      - `1.5` collapse
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w15_p11_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - keep `SPECIALIST_LOSS_WEIGHT = 1.5`
+    - raise `PRESSURE_LOSS_WEIGHT = 1.1`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail again
+    - pressure side is no longer on the old attractor, but still drifts:
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.438`
+  - interpretation:
+    - even a small pressure increase already extinguishes the movement
+    - so the useful pressure window, if it exists, lies below `1.1`
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w15_p12_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - keep `SPECIALIST_LOSS_WEIGHT = 1.5`
+    - raise `PRESSURE_LOSS_WEIGHT = 1.2`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions
+    - normal20 score `116.180`
+  - interpretation:
+    - `PRESSURE_LOSS_WEIGHT = 1.2` is fully on the inert/raw-`tiny64` side
+    - the pressure-axis window is now tightly bracketed:
+      - `1.0` collapse
+      - `1.1` inert
+      - `1.2` raw `tiny64`
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w1475_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.475`
+  - checked result:
+    - badseed success `0.5`
+    - solved:
+      - `6300069 = 170 / 87`
+      - `6300006 = 121 / 64`
+    - failed:
+      - `6300031 = 260 / 189`
+      - `6300058 = 260 / 241`
+    - pressure tail still snaps back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions
+    - normal20 score `115.368`
+  - interpretation:
+    - `1.475` is the first genuinely intermediate weight point:
+      - no longer fully inert
+      - but still not enough to avoid pressure collapse
+    - this confirms the activation boundary is inside:
+      - `1.45` inert
+      - `1.475` partial movement
+      - `1.5` stronger movement / collapse
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w15_p105_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - keep `SPECIALIST_LOSS_WEIGHT = 1.5`
+    - set `PRESSURE_LOSS_WEIGHT = 1.05`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure side is no longer on the old attractor, but still drifts:
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.406`
+  - interpretation:
+    - even `PRESSURE_LOSS_WEIGHT = 1.05` already extinguishes the `w = 1.5` moving point
+    - so the pressure window is effectively inside:
+      - `1.0` collapse
+      - `1.05` inert
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w1475_p105_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.475`
+    - set `PRESSURE_LOSS_WEIGHT = 1.05`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure side remains on the inert/drift side:
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.247`
+  - interpretation:
+    - the first partially moving weight point is also extinguished by the tiny pressure increase
+    - so this branch now looks like a knife-edge rather than a usable open region
+
+- Refined reading after these midpoint probes:
+  - on the exact `40`-row subset, the boundary is now sharper than before:
+    - `w = 1.45` inert
+    - `w = 1.475` partial movement
+    - `w = 1.5` stronger movement / collapse
+  - on the moving side, the pressure counterweight boundary is also effectively knife-edge:
+    - `w = 1.5, p = 1.0` collapses
+    - `w = 1.5, p = 1.05` is already inert
+    - `w = 1.475, p = 1.05` is also inert
+  - so the current disagreement shell no longer looks like it contains a broad, robust usable region
+  - if continuing inside this shell, the only obviously informative remaining scalar point is around:
+    - `w = 1.4875, p = 1.0`
+  - otherwise the stronger conclusion is:
+    - this mechanism is behaving like a knife-edge trigger, not a stable merge path
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w14875_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.4875`
+  - checked result:
+    - badseed success `1.0`
+    - solved:
+      - `6300031 = 60 / 7`
+      - `6300058 = 74 / 22`
+      - `6300069 = 65 / 13`
+      - `6300006 = 69 / 20`
+    - pressure tail still collapses exactly to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions
+    - normal20 score `115.601`
+  - interpretation:
+    - `1.4875` is now the first full-repair point on bad seeds
+    - but it still offers no pressure-side relief at all
+    - so the shell can hit the diagonal objective, but only by fully snapping to the old pressure attractor
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w14875_p1025_pressure3`
+  - implementation:
+    - keep the same exact `40`-row specialist subset
+    - set `SPECIALIST_LOSS_WEIGHT = 1.4875`
+    - set `PRESSURE_LOSS_WEIGHT = 1.025`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure side is no longer on the old line, but still drifts badly:
+      - `5200008 = 48 / 20`
+      - `5200015 = 68 / 38`
+      - `5200022 = 53 / 17`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.406`
+  - interpretation:
+    - even `p = 1.025` already extinguishes the first full-repair point
+    - this is now strong evidence that the current disagreement shell is a true knife-edge trigger, not a robust merge mechanism
+
+- Implementation change:
+  - `train_target8_v11rxc_disagreement_regularized_bad_seed.py`
+    - now supports late-stage loss-weight switches:
+      - `--pressure-loss-weight-late`
+      - `--specialist-loss-weight-late`
+      - `--loss-weight-switch-frac`
+  - `tools/启动_v11rxc_tiny64_n24分歧正则坏种子微调_v1002.sh`
+    - now supports dataset overrides:
+      - `PRESSURE_DATASET_OVERRIDE`
+      - `SPECIALIST_DATASET_OVERRIDE`
+    - and forwards the staged loss-weight env vars
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w14875_tailp1025_exact40`
+  - implementation:
+    - use the exact `40`-row specialist dataset by path override
+    - use a staged loss schedule instead of static weights:
+      - first `87.5%` of training:
+        - `SPECIALIST_LOSS_WEIGHT = 1.4875`
+        - `PRESSURE_LOSS_WEIGHT = 1.0`
+      - final `12.5%` of training:
+        - keep `SPECIALIST_LOSS_WEIGHT = 1.4875`
+        - switch only `PRESSURE_LOSS_WEIGHT -> 1.025`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure side remains on the inert/drift side:
+      - `5200008 = 48 / 20`
+      - `5200015 = 68 / 38`
+      - `5200022 = 53 / 17`
+    - pressure20 aggregate: `29.25` steps, `9.55` collisions
+    - normal20 score `116.406`
+  - interpretation:
+    - even a late tail-only pressure raise still extinguishes the repaired state
+    - so this shell is not merely failing because the static pressure weight is present too early
+    - the disagreement mechanism itself behaves like a knife-edge trigger rather than a stable merge path
+
+- Newly checked probe:
+  - run: `v11rxc_tiny64_n24_disagree_reg_40rows_w14875_tailsp0_exact40`
+  - implementation:
+    - use the exact `40`-row specialist dataset by path override
+    - use a staged loss schedule:
+      - first `87.5%` of training:
+        - `SPECIALIST_LOSS_WEIGHT = 1.4875`
+        - `PRESSURE_LOSS_WEIGHT = 1.0`
+      - final `12.5%` of training:
+        - keep `PRESSURE_LOSS_WEIGHT = 1.0`
+        - switch only `SPECIALIST_LOSS_WEIGHT -> 0`
+  - checked result:
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031,6300058,6300069` all fail
+    - pressure tail returns exactly to raw `tiny64`:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions
+    - normal20 score `116.180`
+  - interpretation:
+    - even removing specialist late still collapses the repaired state back to inert/raw `tiny64`
+    - so this shell does not reopen simply by “build repair first, then turn specialist off”
+
+- Newly checked probe:
+  - run: `v11rxc_n9_pressure_from_40rows_w14875_tiny`
+  - implementation:
+    - do not stay inside the disagreement trainer
+    - instead resume directly from the exact `40-row` full-repair point:
+      - `v11rxc_tiny64_n24_disagree_reg_40rows_w14875_pressure3`
+    - then run the existing standalone `N9 pressure-seed` online trainer for `32ep`
+    - pressure seed pool:
+      - `5200015,5200015,5200015,5200015,5200008,5200022`
+  - checked result:
+    - badseed success remains `1.0`
+    - solved:
+      - `6300031 = 60 / 7`
+      - `6300058 = 74 / 22`
+      - `6300069 = 65 / 13`
+      - `6300006 = 69 / 20`
+    - pressure tail also remains exactly on the old collapsed line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions
+    - normal20 score `115.601`
+  - interpretation:
+    - this is effectively a no-op continuation
+    - the full-repair disagreement attractor is itself stable under direct online `pressure-seed` occupancy
+    - so the failure is not just that pressure preservation was only being applied offline or through auxiliary losses
+
+- Refined reading after the `1.4875` probe:
+  - on the exact `40`-row subset, the moving band is now:
+    - `w = 1.45` inert
+    - `w = 1.475` partial movement
+    - `w = 1.4875` full bad-seed repair
+    - `w = 1.5` full repair / stronger collapse
+  - but the pressure counterweight boundary is even narrower than expected:
+    - `w = 1.4875, p = 1.0` collapses
+    - `w = 1.4875, p = 1.025` is already inert
+  - this means the shell has crossed from “narrow open region” into “practically non-robust trigger”
+
+- Current `v11rxc` reading after this result:
+  - `tiny64` remains the first confirmed pressure-good no-wrapper base on `N9`
+  - `N24` remains the best checked local semantic bridge surface
+  - online families still move too much and collapse to the old `0.75 / 115.601` `N9` attractor
+  - offline BC families now checked across:
+    - `macro_slice_only`
+    - `action_net_only`
+    - `policy_head_only`
+    - all remain effectively on raw `tiny64`
+  - the first explicit drift-controlled mixed family is also now checked:
+    - `N24 online PPO + N9 base anchor replay`, both `policy_head_only`
+    - still remains effectively on raw `tiny64`
+  - the first explicit per-step pressure-regularized PPO family is also now checked:
+    - `N24 online PPO + raw tiny64 pressure imitation on every optimizer step`
+    - even with `all` params trainable, it still remains effectively on raw `tiny64`
+  - the first disagreement-focused family is now also checked:
+    - `N24 online PPO + pressure regularizer + specialist loss only on disagreement rows`
+    - this is the first mechanism that actually moves off raw `tiny64`
+    - but it currently trades that movement for pressure-tail collapse
+  - the first sharply narrowed version of that family is also now checked:
+    - `specialist = 6300069 only`
+    - `pressure counterweight = 5200008/5200015/5200022 only`
+    - this removes both the repair and the pressure collapse
+    - so the useful regime sits between:
+      - the broad disagreement setting that moves too much
+      - and the sharply narrowed setting that no longer moves at all
+  - the complementary asymmetric narrowing is now checked too:
+    - keep full specialist disagreement mass
+    - narrow only the pressure counterweight to the three collapsed tail seeds
+    - this still snaps directly to the old attractor
+    - so the remaining missing ingredient is not just “which pressure seeds to protect”
+  - a pure seed-subset refinement is now checked too:
+    - keep only `6300031 + 6300069`
+    - keep the same three pressure-tail counterweight seeds
+    - this still snaps directly to the old attractor
+    - so the remaining missing ingredient is not just “which specialist seeds to keep”
+  - a global `recovery_mode` refinement is now checked too:
+    - removing `mode 6` from the `6300031 + 6300069` subset (`46` rows) makes the branch fully inert
+    - so `mode 6` is part of the movement path
+  - a seed-specific mode refinement is now checked too:
+    - `6300069:* + 6300031:6` (`42` rows) is already enough to collapse to the old attractor
+    - but adding `min_no_progress_time >= 0.6` to that same subset (`36` rows) is already inert
+    - two different exact `31`-row subsets are also inert:
+      - low slice `0.0/0.3`
+      - mid slice `0.6`
+    - `37`, `38`, and `39` rows are also all inert
+    - but widening to `40` rows with `0.0/0.3/0.6/0.9` is already enough to collapse
+    - so the row-count boundary is now tightly localized:
+      - `39` rows inert
+      - `40` rows collapse
+    - and it is not a single obvious exact bucket identity
+  - the fixed-`40` exact subset now also shows a narrow weight boundary:
+    - `specialist_loss_weight = 1.4` is still inert
+    - `specialist_loss_weight = 1.45` is still inert
+    - `specialist_loss_weight = 1.475` is the first partially moving point
+    - `specialist_loss_weight = 1.4875` already reaches full bad-seed repair
+    - `specialist_loss_weight = 1.5` also repairs, but remains on the collapse side
+    - so there is now a clear 2D narrow-band picture:
+      - row mass threshold near `39 -> 40`
+      - weight threshold near `1.45 -> 1.475 -> 1.4875 -> 1.5`
+  - the fixed-`40` exact subset also now shows a narrow pressure boundary at `specialist_loss_weight = 1.5`:
+    - `pressure_loss_weight = 1.0` collapses
+    - `pressure_loss_weight = 1.025` is already inert
+    - `pressure_loss_weight = 1.05` is already inert
+    - `pressure_loss_weight = 1.1` is already inert
+    - `pressure_loss_weight = 1.2` is fully back to raw `tiny64`
+    - and `pressure_loss_weight = 1.05` also extinguishes the first partially moving point at `w = 1.475`
+    - and `pressure_loss_weight = 1.025` also extinguishes the first full-repair point at `w = 1.4875`
+    - so this pressure window, if it exists at all, lies inside `1.0 -> 1.025`
+  - the first staged-loss exact-40 probe also fails to create a wider window:
+    - a delayed final-stage switch to `p = 1.025` still lands on the same inert/drift side
+    - so this is not just “pressure appears too early” under static weighting
+  - a second staged-loss exact-40 probe closes the other obvious delayed route too:
+    - a delayed final-stage switch to `specialist = 0` still lands on inert/raw `tiny64`
+    - so this is not just “specialist remains active too late” either
+  - a direct standalone online pressure phase also does not reopen the path:
+    - resuming from the full-repair exact-`40` point
+    - then training directly on the real `pressure-seed` occupancy
+    - leaves the policy behavior-identical to that same repaired/collapsed point
+    - so even a full online occupancy switch to the pressure seeds does not pull the model out of this attractor
+  - a first state-threshold refinement is now checked too:
+    - keep full specialist seeds
+    - keep pressure counterweight on the three collapsed tail seeds
+    - but filter specialist disagreement rows to `no_progress_time >= 1.0`
+    - this becomes inert again
+    - so the missing ingredient is not simply a scalar threshold on `no_progress_time`
+  - the remaining gap is now even more clearly a mechanism problem:
+    - not a missing surface problem
+    - not just “too few offline trainable parameters”
+    - not just “online PPO is unconstrained”, because a constrained mixed PPO/BC recipe is now also inert
+    - not just “PPO lacks generic pressure preservation”, because a per-step pressure imitation regularizer is now also inert
+    - but also no longer “nothing can move”:
+      - targeted disagreement-based movement can repair at least one hard diagonal seed
+  - next useful direction should be a stronger structural merge method around `tiny64 + N24`, likely:
+    - keep the disagreement-based mechanism as the active branch
+    - keep enough disagreement mass to preserve the ability to move
+    - but make the counterweight smarter than pure hard narrowing, so it does not spill into pressure-tail states
+    - likely next knobs are:
+      - keep multi-seed specialist disagreement, but gate it by stronger conditions than raw macro mismatch
+      - first try `recovery_mode`-based filtering rather than another plain seed-subset retune
+      - `recovery_mode`-only filtering is no longer enough:
+        - removing `mode 6` becomes inert
+        - keeping only `6300031 mode 6` plus all of `6300069` still collapses
+      - the next useful filter is still inside `6300031 mode 6`, but now the evidence points to a narrow mass threshold:
+        - `31` rows inert
+        - `36` rows inert
+        - `37` rows inert
+        - `38` rows inert
+        - `39` rows inert
+        - `40` rows collapse
+      - and the exact `40`-row subset also has a narrow weight threshold:
+        - `w = 1.4` inert
+        - `w = 1.45` inert
+        - `w = 1.475` partial movement
+        - `w = 1.5` collapse
+      - and the same exact `40`-row subset now also has a narrow pressure threshold:
+        - `p = 1.0` collapse
+        - `p = 1.025` inert
+        - `p = 1.05` inert
+        - `p = 1.1` inert
+        - `p = 1.2` raw `tiny64`
+      - the scalar window inside this shell is now essentially exhausted
+      - even simple staged-loss schedules did not open it up:
+        - late `p = 1.025`
+        - late `specialist = 0`
+      - and a direct standalone `pressure-seed` online phase from the full-repair point is effectively a no-op
+      - the stronger next move is likely abandoning this narrow disagreement shell in favor of a more structural mechanism, because the current branch now looks like a knife-edge trigger rather than a robust merge path
+      - keep macro-only disagreement, but raise counterweight on drifting states rather than merely drifting seeds
+      - but avoid blunt single-threshold cuts like `no_progress_time >= 1.0`, which already proved too coarse
+  - avoid spending more cycles on nearby retunes of:
+    - the same offline BC recipe
+    - or the same `policy_head_only` drift-controlled mixed recipe
+    - or the same generic pressure-regularized PPO recipe
+
+## Latest v11rxc Mixed Occupancy Status
+
+- Newly added trainer:
+  - `train_target8_v11rxc_badseed_pressure_mix_curriculum.py`
+- Newly added launcher:
+  - `tools/启动_v11rxc_tiny64坏种子压力混合占用_v1002.sh`
+- Purpose:
+  - test a direct one-phase online occupancy mix from the repaired exact-`40` point
+  - some envs cycle through bad seeds
+  - the rest cycle through pressure seeds
+  - no disagreement auxiliary loss, just structural occupancy mixing
+- Current code extension:
+  - this mixed trainer now also supports an optional `specialist` auxiliary loss
+  - it reuses:
+    - `AuxiliaryRegularizer`
+    - parameter-mask / optimizer helpers
+    - from `train_target8_v11rxc_disagreement_regularized_bad_seed.py`
+- Resume point:
+  - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w14875_pressure3/.../rppo_medium_lstm128x2_observable12_target8_macro_library_v11rxc_stage2.zip`
+- Checked probes on `2026-05-24`:
+  - `v11rxc_tiny64_mix50_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.5`
+    - badseed success `0.25`
+    - only `6300006` succeeds; `6300031, 6300058, 6300069` all fail
+    - pressure tail lands exactly on the raw `tiny64` line:
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - `v11rxc_tiny64_mix75_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.75`
+    - behavior-identical to `mix50`
+    - same badseed, pressure20, and normal20 summaries
+  - `v11rxc_tiny64_mix0125_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.125`
+    - badseed success `0.75`
+    - pressure tail collapses to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - pressure20 aggregate: `29.0` steps, `9.1` collisions, `16.55 deg`
+    - normal20 score `115.601`
+  - `v11rxc_tiny64_mix025_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.25`
+    - behavior-identical to `mix0125`
+  - `v11rxc_tiny64_mix0375_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.375`
+    - still behavior-identical to `mix0125`
+  - `v11rxc_tiny64_mix04375_from_40rows_w14875_tiny`
+    - `bad_seed_ratio = 0.4375`
+    - already jumps back to the raw `tiny64` line
+    - badseed success `0.25`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - `v11rxc_tiny64_mix04375_exact40spec_w145_tiny`
+    - same `mix04375` occupancy split
+    - exact-`40` specialist dataset from `v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_nop009_pressure3`
+    - `40` samples, `macro_only`, `specialist_loss_weight = 1.45`
+    - badseed success `0.75`
+    - pressure tail collapses straight back to the old line:
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - normal20 score `115.601`
+  - `v11rxc_tiny64_mix04375_exact40spec_w1475_tiny`
+    - same as above, but `specialist_loss_weight = 1.475`
+    - behavior-identical to `w145`
+  - `v11rxc_w1475_mix0375_tiny`
+    - resume point switched to the partial exact-`40` model:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w1475_pressure3/...zip`
+    - `bad_seed_ratio = 0.375`
+    - still lands on the old attractor:
+      - badseed `0.75`
+      - `5200008 = 100 / 48`
+      - `5200015 = 61 / 33`
+      - `5200022 = 44 / 14`
+    - normal20 score `115.601`
+  - `v11rxc_w1475_mix04375_tiny`
+    - same partial resume point
+    - `bad_seed_ratio = 0.4375`
+    - first genuine mixed-branch intermediate:
+      - badseed remains `0.25`
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 37 / 14`
+    - pressure20 aggregate improves to `27.0` steps, `8.35` collisions, `15.41 deg`
+    - normal20 score `116.406`
+  - `v11rxc_w1475_mix50_tiny`
+    - same partial resume point
+    - `bad_seed_ratio = 0.5`
+    - falls back again to the raw `tiny64` line:
+      - badseed `0.25`
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - normal20 score `116.180`
+  - `v11rxc_w145_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w145_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - lands on a milder boundary drift state:
+      - badseed `0.25`
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.55` steps, `9.5` collisions, `15.36 deg`
+    - normal20 score `116.247`
+  - `v11rxc_w14875p1025_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w14875_p1025_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - lands almost identically to `w145_mix04375`:
+      - badseed `0.25`
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `9.25` collisions, `15.01 deg`
+    - normal20 score `116.247`
+  - `v11rxc_tailp1025_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w14875_tailp1025_exact40/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - also lands on the same milder drift family:
+      - badseed `0.25`
+      - `5200008 = 48 / 20`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `9.25` collisions, `15.01 deg`
+    - normal20 score `116.247`
+  - `v11rxc_w15p11_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w15_p11_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - but this one snaps straight to the raw `tiny64` family:
+      - badseed `0.25`
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - pressure20 aggregate: `28.25` steps, `8.95` collisions, `15.62 deg`
+    - normal20 score `116.180`
+  - `v11rxc_w14_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w14_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - also snaps straight to the raw `tiny64` family:
+      - badseed `0.25`
+      - `5200008 = 42 / 8`
+      - `5200015 = 59 / 24`
+      - `5200022 = 33 / 12`
+    - normal20 score `116.180`
+  - `v11rxc_tailsp0_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w14875_tailsp0_exact40/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - again snaps straight to the raw `tiny64` family
+    - normal20 score `116.180`
+  - `v11rxc_w15p105_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w15_p105_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - snaps straight to the raw `tiny64` family
+    - normal20 score `116.180`
+  - `v11rxc_w1475p105_mix04375_tiny`
+    - resume point switched to:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_40rows_w1475_p105_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - also snaps straight to the raw `tiny64` family
+    - normal20 score `116.180`
+  - `v11rxc_38rows_mix04375_tiny`
+    - resume point switched to the structural bridge subset:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_38_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - snaps straight to the raw `tiny64` family
+    - normal20 score `116.180`
+  - `v11rxc_39rows_mix04375_tiny`
+    - resume point switched to the `39`-row bridge subset:
+      - `runs/v11rxc_tiny64_n24_disagree_reg_6300069_all_plus_6300031_m6_39_pressure3/...zip`
+    - same boundary split `bad_seed_ratio = 0.4375`
+    - also snaps straight to the raw `tiny64` family
+    - normal20 score `116.180`
+- Interpretation:
+  - this branch is not a pure no-op in the same way as the earlier standalone `N9 pressure-seed` phase from the repaired exact-`40` point
+  - but it still does not yield a real merge state:
+    - low bad-seed occupancy lands on the old `0.75 / 115.601` attractor
+    - higher bad-seed occupancy lands on the raw `tiny64` `0.25 / 116.180` line
+  - from the original full-repair resume point, no third state has been observed
+  - the baseline boundary is still localized tightly:
+    - `bad_seed_ratio = 0.375` still old attractor
+    - `bad_seed_ratio = 0.4375` already raw `tiny64`
+  - since the trainer computes `round(n_envs * bad_seed_ratio)` with `n_envs = 24`, the evidence points to a discrete env-count threshold:
+    - `9` bad-seed envs -> old attractor
+    - `10` bad-seed envs -> raw `tiny64`
+  - adding the first exact-`40` specialist auxiliary on the high side still does not create a merge state:
+    - `mix04375 + exact40 specialist @ 1.45`
+    - `mix04375 + exact40 specialist @ 1.475`
+    - both flip the high-side raw `tiny64` basin directly back to the old attractor
+  - changing the resume point does reveal one narrow initialization-sensitive window:
+    - the exact boundary point `10/24` bad-seed envs is initialization-sensitive
+    - there are now at least two distinct intermediate families:
+    - there are now at least three boundary outcomes under changed initialization:
+      - stronger drift family:
+        - from `40rows_w1475`
+        - `5200008 = 48 / 20`
+        - `5200015 = 59 / 24`
+        - `5200022 = 37 / 14`
+        - normal20 `116.406`
+      - milder drift family:
+        - from `40rows_w145`
+        - from `40rows_w14875_p1025`
+        - from `40rows_w14875_tailp1025_exact40`
+        - `5200008 = 48 / 20`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.247`
+      - direct raw-snap family:
+        - from `40rows_w15_p11`
+        - from `40rows_w14`
+        - from `40rows_w14875_tailsp0_exact40`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - importantly, simple standalone pressure-side similarity is not enough to predict the family:
+      - `w14` by itself already has drift-like `5200008 = 48 / 20`
+      - but `w14 + 10/24 mixed occupancy` still snaps to raw `tiny64`
+    - simple proximity to the pressure threshold is also not enough:
+      - `w15_p105`
+      - `w1475_p105`
+      - both still snap to raw `tiny64`
+    - simple structural proximity to exact-`40` is also not enough:
+      - `38` rows
+      - `39` rows
+      - both still snap to raw `tiny64`
+    - continuation from the two nontrivial boundary families does not persist:
+      - `v11rxc_w1475_mix04375_cont_tiny`
+      - `v11rxc_w145_mix04375_cont_tiny`
+      - both repeat the same `10/24` mixed-occupancy phase once more
+      - both then collapse to the raw `tiny64` line:
+        - badseed `0.25`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - pressure-side teacher replay from the stronger transient family also does not persist:
+      - `v11rxc_40rows_w14875_mix04375_w1475pressureteach_tiny`
+      - setup:
+        - resume = `40rows_w14875`
+        - same `10/24` mixed occupancy
+        - auxiliary teacher = pressure dataset exported from `w1475_mix04375`
+        - `321` samples, policy labels, `loss_heads = all`, `loss_weight = 0.6`
+      - result still collapses to the raw `tiny64` line:
+        - badseed `0.25`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - a cross-scenario teacher built from the stronger transient family also does not persist:
+      - `v11rxc_40rows_w14875_mix04375_w1475crossscenario_tiny`
+      - setup:
+        - resume = `40rows_w14875`
+        - same `10/24` mixed occupancy
+        - auxiliary teacher = concatenated `w1475_mix04375` pressure + bad-seed policy dataset
+        - `321 + 901 = 1222` samples, `loss_heads = all`, `loss_weight = 0.6`
+      - result still collapses to the raw `tiny64` line:
+        - badseed `0.25`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - even an intervention-state slice of that stronger transient family also does not persist:
+      - `v11rxc_40rows_w14875_mix04375_w1475cross_modeNZ_nop06_tiny`
+      - setup:
+        - resume = `40rows_w14875`
+        - same `10/24` mixed occupancy
+        - auxiliary teacher = the same `w1475` cross-scenario policy dataset
+        - trainer-side filter:
+          - `recovery_mode in {1,2,3,4,5,6,7}`
+          - `no_progress_time >= 0.6`
+        - resulting specialist set = `267` samples
+        - `loss_heads = all`, `loss_weight = 1.0`
+      - result still collapses to the raw `tiny64` line:
+        - badseed `0.25`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - even an online-triggered intervention-state slice also does not persist:
+      - `v11rxc_40rows_w14875_mix04375_w1475cross_modeNZ_nop06_onlinegate_tiny`
+      - setup:
+        - resume = `40rows_w14875`
+        - same `10/24` mixed occupancy
+        - teacher = same filtered `w1475` cross-scenario intervention-state slice
+          - `recovery_mode in {1,2,3,4,5,6,7}`
+          - `no_progress_time >= 0.6`
+          - `267` samples
+        - new mechanism in mixed trainer:
+          - specialist loss is not always on
+          - it is activated from pressure-env rollout occupancy
+          - trigger condition:
+            - `recovery_mode in {1,2,3,4,5,6,7}`
+            - `no_progress_time >= 0.6`
+          - configured `base_loss_weight = 3.0`
+          - applied weight scales by trigger occupancy fraction
+        - observed rollout trigger stats:
+          - pressure steps `896`
+          - triggered steps `115`
+          - active fraction `0.1283`
+          - applied loss weight `0.385`
+      - result still collapses to the raw `tiny64` line:
+        - badseed `0.25`
+        - `5200008 = 42 / 8`
+        - `5200015 = 59 / 24`
+        - `5200022 = 33 / 12`
+        - normal20 `116.180`
+    - outside that exact boundary point, the checked changed resume point still snaps back:
+      - `40rows_w1475 + 9/24` -> old attractor
+      - `40rows_w1475 + 12/24` -> raw `tiny64`
+    - so the branch is not fully memoryless
+    - but the memory window is still extremely narrow
+    - and the observed stronger/milder drift families are transient, not stable attractors
+    - this additionally suggests that pressure-side imitation alone is not the missing stabilizer for the boundary family
+    - and even cross-scenario imitation of the stronger transient family is still insufficient
+    - and removing the easy teacher rows still does not help, so the problem is not merely teacher dilution by routine states
+    - and adding rollout-time trigger gating still does not help, so the problem is not merely that the specialist signal needs better timing at rollout scope
+  - but it still mostly behaves like a two-basin switch, not a smooth occupancy tradeoff, even after:
+    - reintroducing a narrow specialist signal
+    - or changing initialization to the first partial point
+- Near-term consequence:
+  - if continuing this branch, skip more scalar ratio nudges unless they change the discrete env-count split or the trainer logic
+  - the first high-side exact-`40` specialist weights are also already low-value nearby retune points
+  - the next informative probe should be:
+    - identify what changes the first transition into the `10/24` boundary state itself, since the observed drift families do not persist under one more same-boundary phase
+    - simple proxies now look insufficient on their own:
+      - standalone `pressure20` quality
+      - whether the source point was staged
+      - whether the source point was merely “below collapse”
+      - closeness to the pressure boundary itself
+      - closeness to the exact-`40` row count itself
+      - pressure-side behavior imitation by itself
+      - simple cross-scenario imitation of the transient boundary family
+      - simple intervention-state slicing of that transient teacher family
+      - rollout-time trigger gating of that same transient teacher family
+      - rollout-time trigger gating of that same transient teacher family even when the trainable block is shrunk to `macro_slice_only`
+    - or try a different auxiliary target than the current exact-`40` macro-only specialist
+- 2026-05-25 structural stop-trigger update:
+  - checked run:
+    - `v11rxc_40rows_w14875_mix04375_w1475cross_modeNZ_nop06_onlinegate_macroslice_tiny`
+  - setup:
+    - same `10/24` mixed-occupancy split
+    - same filtered `w1475` cross-scenario intervention-state teacher (`267` samples)
+    - same rollout trigger occupancy as the prior online-gated run:
+      - pressure steps `896`
+      - triggered steps `115`
+      - active fraction `0.1283`
+      - applied loss weight `0.385`
+    - but trainable params shrink to `macro_slice_only`:
+      - `1935` params
+      - macro slice `7:15`
+  - result is still exactly the raw `tiny64` line:
+    - badseed `0.25`
+    - `5200008 = 42 / 8`
+    - `5200015 = 59 / 24`
+    - `5200022 = 33 / 12`
+    - normal20 `116.180`
+  - interpretation:
+    - the failure of the online-gated teacher branch is not explained by the previous all-params update being too wide
+    - the current `v11rxc` mixed-occupancy teacher-stabilization shell is now practically exhausted
+  - recommended stop condition:
+    - stop this `v11rxc` shell unless the next idea changes mechanism qualitatively beyond the current trainer / teacher / trigger family
+    - do not spend more cycles on nearby variants of the same shell
+
+## Execution Constraints
+
+- Always prefix shell commands with `rtk`.
+- Remote training target is usually `v1002`.
+- Use CPU on `v1002`; NVIDIA driver is unavailable there.
+- Activate env with:
+  `source ~/miniconda3/etc/profile.d/conda.sh && conda activate ML`
+- Typical train/eval flags include `--device cpu --torch-threads 1`.
+- The worktree is dirty with many generated files and unrelated changes. Do not revert unrelated files.
+
+## Suggested Next Step
+
+If continuing active improvement, keep `v11b stage2` as the default model to beat. Run short candidate probes first, using fixed pressure/diagonal tests and still/collision metrics, then only expand to larger evals after a candidate beats `v11b stage2` on:
+
+- success rate,
+- steps,
+- terminal angle,
+- recovery use,
+- collision count,
+- still-step rate and max still run.
+
+Given the user's speed concern, avoid another long 100-episode gate until a candidate passes a shorter screen.

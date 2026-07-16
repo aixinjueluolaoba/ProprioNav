@@ -1,0 +1,14 @@
+{
+  "observable12_target8_discrete_recovery_v10_stage3": {
+    "__env__": {
+      "mountain_count": 34,
+      "deep_concave_mountain_probability": 0.82,
+      "trapped_start_probability": 0.68,
+      "opposite_heading_probability": 0.52
+    },
+    "__wrapper__": {
+      "selective_no_progress_threshold": 0.85,
+      "selective_collision_threshold": 0.82
+    }
+  }
+}

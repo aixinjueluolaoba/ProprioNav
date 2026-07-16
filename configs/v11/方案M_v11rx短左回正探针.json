@@ -1,0 +1,25 @@
+{
+  "observable12_target8_macro_library_v11rx_stage2": {
+    "__env__": {
+      "reward_close_align_bonus_scale": 1.35,
+      "reward_terminal_align_bonus_scale": 1.20,
+      "reward_recovery_bonus_scale": 1.15,
+      "reward_non_recovery_angle_penalty_scale": 1.10,
+      "reward_non_recovery_heading_penalty_scale": 1.08,
+      "reward_non_recovery_action_change_penalty_scale": 1.05,
+      "macro_recovery_clear_time_threshold": 0.85,
+      "macro_recovery_clear_no_progress_threshold": 0.14,
+      "macro_recovery_progress_gain_threshold": 7.5,
+      "macro_recovery_progress_step_threshold": 1.1
+    },
+    "__wrapper__": {
+      "selective_no_progress_threshold": 0.92,
+      "selective_collision_threshold": 0.80,
+      "stuck_macro_explore_prob": 0.22,
+      "stuck_macro_no_progress_threshold": 0.38,
+      "stuck_macro_collision_threshold": 0.70,
+      "stuck_macro_choices": [1, 2, 3, 4, 5, 6, 7],
+      "stuck_macro_weights": [0.24, 0.12, 0.12, 0.03, 0.05, 0.14, 0.30]
+    }
+  }
+}

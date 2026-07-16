@@ -1,0 +1,11 @@
+{
+  "observable12_target8_discrete_recovery_v10_stage3": {
+    "__env__": {
+      "delta_angle_limit": 0.9599310885968813
+    },
+    "__wrapper__": {
+      "selective_no_progress_threshold": 1.2,
+      "selective_collision_threshold": 0.94
+    }
+  }
+}

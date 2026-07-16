@@ -1,0 +1,16 @@
+[Unit]
+Description=VM reboot watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /usr/local/bin/vm_reboot_watch.sh
+Restart=always
+RestartSec=2
+Environment=SAMPLE_INTERVAL=5
+Environment=RETENTION_MINUTES=65
+Environment=HEAVY_EVERY=12
+
+[Install]
+WantedBy=multi-user.target

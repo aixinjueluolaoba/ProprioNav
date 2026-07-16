@@ -1,0 +1,8 @@
+{
+  "observable10_target8_continuous_fixed_recovery_v6": {
+    "__env__": {
+      "fixed_recovery_auto_no_progress_threshold": 0.75,
+      "fixed_recovery_auto_collision_threshold": 1.10
+    }
+  }
+}

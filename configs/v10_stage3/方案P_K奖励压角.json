@@ -1,0 +1,15 @@
+{
+  "observable12_target8_discrete_recovery_v10_stage3": {
+    "__env__": {
+      "mountain_count": 30,
+      "deep_concave_mountain_probability": 0.68,
+      "trapped_start_probability": 0.54,
+      "opposite_heading_probability": 0.42,
+      "reward_angle_penalty_scale": 1.10,
+      "reward_heading_change_penalty_scale": 1.08,
+      "reward_action_change_penalty_scale": 1.05,
+      "reward_close_align_bonus_scale": 1.08,
+      "reward_recovery_bonus_scale": 0.96
+    }
+  }
+}

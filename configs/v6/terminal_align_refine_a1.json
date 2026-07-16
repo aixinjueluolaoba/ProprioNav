@@ -1,0 +1,9 @@
+{
+  "observable10_target8_continuous_fixed_recovery_v6": {
+    "__env__": {
+      "reward_close_align_bonus_scale": 1.18,
+      "reward_terminal_align_bonus_scale": 1.80,
+      "reward_recovery_bonus_scale": 0.90
+    }
+  }
+}

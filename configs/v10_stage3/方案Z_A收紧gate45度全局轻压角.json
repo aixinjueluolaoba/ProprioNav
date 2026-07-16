@@ -1,0 +1,15 @@
+{
+  "observable12_target8_discrete_recovery_v10_stage3": {
+    "__env__": {
+      "delta_angle_limit": 0.7853981633974483,
+      "reward_angle_penalty_scale": 1.04,
+      "reward_heading_change_penalty_scale": 1.03,
+      "reward_action_change_penalty_scale": 1.01,
+      "reward_recovery_bonus_scale": 1.0
+    },
+    "__wrapper__": {
+      "selective_no_progress_threshold": 1.2,
+      "selective_collision_threshold": 0.94
+    }
+  }
+}
