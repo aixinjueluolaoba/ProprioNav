@@ -1,0 +1,27 @@
+# Python 缓存与字节码
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Rust 编译输出目录
+ncnn_rust/target/
+Cargo.lock
+
+# 视频评估大文件与模型二进制权重
+*.mp4
+eval_out/
+pipeline_out/*.mp4
+
+# 模型权重大文件
+pipeline_out/policy_weights.pth
+pipeline_out/policy.onnx
+pipeline_out/policy_cleaned.onnx
+pipeline_out/policy.pt
+pipeline_out/policy.bin
+pipeline_out/libncnn_rust.so
+pipeline_out/policy.*.bin
+pipeline_out/policy.*.param
+pipeline_out/policy.*.onnx
+
+# NCNN 编译源码与构建树
+pipeline_out/ncnn_source/

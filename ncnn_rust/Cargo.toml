@@ -1,0 +1,8 @@
+[package]
+name = "ncnn_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ncnn_rust"
+crate-type = ["cdylib"]
