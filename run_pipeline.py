@@ -15,7 +15,7 @@ import numpy as np
 CONFIG = {
     # --- 强化学习训练参数 (GPU Vectorized) ---
     "num_envs": 60000,           # 并行仿真环境数 (显存约占用 3.4GB，支持 Tesla V100)
-    "total_episodes": 150000,     # 训练总轮数 (达到该数量后停止)
+    "total_episodes": 50000,     # 训练总轮数 (达到该数量后停止)
     "rollout_steps": 128,         # 每次收集的步数
     "minibatch_envs": 4096,       # PPO 梯度更新时的小批次环境数 (越大 GPU 饱和度越高)
     "ppo_epochs": 4,             # 每次收集后的更新 Epoch 树
