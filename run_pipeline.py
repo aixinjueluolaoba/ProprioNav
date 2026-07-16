@@ -802,8 +802,8 @@ def run_pipeline():
                 scaler.step(optimizer)
                 scaler.update()
                 
-        # 每 5 迭代输出
-        if update_iter % 5 == 0 or episodes_finished >= total_episodes:
+        # 每 1 迭代输出 (每轮更新都进行打印，方便实时观察吞吐与速度)
+        if update_iter % 1 == 0 or episodes_finished >= total_episodes:
             elapsed_time = time.time() - start_time
             steps_per_sec = int(total_steps_collected / elapsed_time)
             print(f"[{elapsed_time:5.1f}s] Ep: {episodes_finished:6d}/{total_episodes} | "
