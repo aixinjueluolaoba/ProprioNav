@@ -12,7 +12,8 @@ def main():
     print("================== 🌲 PyTorch VS NCNN 推理一致性验证 🌲 ==================")
     
     # 1. 实例化 PyTorch 模型并运行推理
-    weights_path = Path('/home/diana/盲人寻路/pipeline_out/policy_weights.pth')
+    current_dir = Path(__file__).parent
+    weights_path = current_dir / 'policy_weights.pth'
     if not weights_path.exists():
         print(f"Error: 找不到权重文件 {weights_path}")
         return
@@ -44,7 +45,7 @@ def main():
     py_c = py_c.numpy().flatten()
     
     # 2. 调用 Rust NCNN SO 推理
-    so_path = "/home/diana/盲人寻路/pipeline_out/libncnn_rust.so"
+    so_path = str(current_dir / "libncnn_rust.so")
     if not Path(so_path).exists():
         print(f"Error: 找不到动态链接库 {so_path}")
         return
@@ -72,8 +73,8 @@ def main():
     lib.run_inference.restype = ctypes.c_int
     
     # 初始化 NCNN
-    param_path = "/home/diana/盲人寻路/pipeline_out/policy.param".encode('utf-8')
-    bin_path = "/home/diana/盲人寻路/pipeline_out/policy.bin".encode('utf-8')
+    param_path = str(current_dir / "policy.param").encode('utf-8')
+    bin_path = str(current_dir / "policy.bin").encode('utf-8')
     
     net_handle = lib.init_net(param_path, bin_path)
     if not net_handle:

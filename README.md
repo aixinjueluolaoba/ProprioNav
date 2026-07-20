@@ -1,14 +1,14 @@
-# 🌲 2D Gymnasium 盲人导航强化学习 NCNN 部署与 Rust 推理库工程
+# 🌲 ProprioNav (基于本体感知反馈的盲区导航系统)
 
-本工程是针对 2D Gymnasium 盲人导航强化学习（RL）模型的轻量级部署与推理系统。
-我们通过将带有 LSTM 隐状态的 Recurrent PPO 策略网络重构并转换为 NCNN 模型格式（FP16 半精度优化），使用 Rust 编写高性能 FFI 桥接接口并打包为动态链接库 `.so`，最后通过 Python 实现了高精度的 ctypes 自动化回归测试。
+本工程是针对 2D Gymnasium 盲区导航强化学习（RL）策略模型的轻量级 NCNN 推理部署与 Rust 绑定工程。
+基于带有 LSTM 隐状态的 Recurrent PPO 策略网络，我们将其重构并转换为 NCNN 模型格式（FP16 半精度优化），使用 Rust 编写高性能 FFI 桥接接口并打包为动态链接库 `.so`，最后通过 Python 实现了高精度的 ctypes 自动化回归测试。
 
 ---
 
 ## 🗺️ 部署目录结构
 
 ```text
-/home/diana/盲人寻路/
+ProprioNav/
 ├── ncnn_rust/                 # Rust 编译工程
 │   ├── Cargo.toml             # Rust 依赖与 cdylib（动态库）配置
 │   ├── build.rs               # 静态链接 libncnn.a 并关联系统动态库
@@ -21,7 +21,7 @@
 │   ├── policy.pt              # TorchScript 追踪模型
 │   ├── policy.param           # PNNX 转换输出的 NCNN 网络描述文件 (已包含 FP16 参数)
 │   ├── policy.bin             # PNNX 转换输出的 NCNN 权重文件 (已包含 FP16 参数)
-│   ├── libncnn_rust.so        # 最终编译生成的高性能 Rust 动态链接库 (16MB，已打包 AVX-512)
+│   ├── libncnn_rust.so        # 最终编译生成的高性能 Rust 动态链接库 (已打包 AVX-512)
 │   └── test_inference.py      # Python 自动化精度比对验证脚本
 │
 └── README.md                  # 本说明文档
@@ -33,7 +33,7 @@
 
 ### 1. PyTorch 模型重构
 由于 PyTorch 的 `nn.LSTM` 默认导出的 ONNX 会生成复杂的 runtime 转置和切片，导致标准的 `onnx2ncnn` 无法正确识别其常量权重，在 `.bin` 中导出为空权重（2=0）。
-我们在 [export_onnx.py](file:///home/diana/盲人寻路/pipeline_out/export_onnx.py) 中，在数学上等价地将单步 LSTM 推理展开为标准的矩阵乘法和基本逻辑：
+我们在 `pipeline_out/export_onnx.py` 中，在数学上等价地将单步 LSTM 推理展开为标准的矩阵乘法和基本逻辑：
 * 在构造函数 `__init__` 中提前对权重进行转置：
   ```python
   self.W_ih_t = nn.Parameter(model.lstm.weight_ih_l0.clone().t())
@@ -48,20 +48,18 @@
 ### 2. 使用 PNNX 转换 (FP16 优化)
 我们直接将模型导出为 TorchScript 格式（`policy.pt`），并使用 NCNN 官方推荐的最先进的 **PNNX** 转换器一键生成 NCNN 参数与模型：
 ```bash
-/home/diana/miniconda3/envs/ML/bin/pnnx \
-  /home/diana/盲人寻路/pipeline_out/policy.pt \
-  inputshape=[1,12],[1,64],[1,64]
+pnnx pipeline_out/policy.pt inputshape=[1,12],[1,64],[1,64]
 ```
 PNNX 默认启用了 **FP16** 精度的网络优化，成功将浮点模型权重无损地压缩至 `45KB` 左右。之后复制为标准名称：
-* [policy.param](file:///home/diana/盲人寻路/pipeline_out/policy.param)
-* [policy.bin](file:///home/diana/盲人寻路/pipeline_out/policy.bin)
+* `policy.param`
+* `policy.bin`
 
 ---
 
 ## 🦀 Rust 推理共享库 (ncnn_rust)
 
 ### 1. FFI C-API 接口定义
-Rust 库 [lib.rs](file:///home/diana/盲人寻路/ncnn_rust/src/lib.rs) 通过 FFI 声明并封装了 NCNN 内部的 C-API 符号，实现了全管道零拷贝：
+Rust 库 `ncnn_rust/src/lib.rs` 通过 FFI 声明并封装了 NCNN 内部的 C-API 符号，实现了全管道零拷贝：
 * **`init_net`**
   ```rust
   #[no_mangle]
@@ -96,20 +94,20 @@ Rust 库 [lib.rs](file:///home/diana/盲人寻路/ncnn_rust/src/lib.rs) 通过 F
 ### 2. 编译指南
 为了避免开发环境中的 linker 符号重定向报错（例如 `unknown option -m64`），请使用真实的系统 GCC 编译器作为后端链接器进行编译：
 ```bash
-cd /home/diana/盲人寻路/ncnn_rust
+cd ncnn_rust
 RUSTFLAGS="-C linker=/usr/bin/gcc" cargo build --release
 ```
-编译产物会生成在 `target/release/libncnn_rust.so`，由于静态打包了 NCNN 内部的全部向量化计算库（支持系统 AVX-512 SIMD 并行加速），其大小约为 16MB。编译完成后可直接拷贝至 [pipeline_out](file:///home/diana/盲人寻路/pipeline_out) 目录。
+编译产物会生成在 `target/release/libncnn_rust.so`，由于静态打包了 NCNN 内部的全部向量化计算库（支持系统 AVX-512 SIMD 并行加速），其大小约为 16MB。编译完成后可直接拷贝至 `pipeline_out/` 目录。
 
 ---
 
 ## 🐍 Python 自动化精度比对 (Python test code)
 
-测试验证脚本 [test_inference.py](file:///home/diana/盲人寻路/pipeline_out/test_inference.py) 使用 `ctypes` 装载 Rust 动态库并和原生的 PyTorch 执行对齐校验：
+测试验证脚本 `pipeline_out/test_inference.py` 使用 `ctypes` 装载 Rust 动态库并和原生的 PyTorch 执行对齐校验：
 
 ### 运行方式
 ```bash
-/home/diana/miniconda3/envs/ML/bin/python /home/diana/盲人寻路/pipeline_out/test_inference.py
+python pipeline_out/test_inference.py
 ```
 
 ### 验证精度报告示例

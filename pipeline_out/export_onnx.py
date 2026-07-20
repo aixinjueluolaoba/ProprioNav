@@ -64,7 +64,8 @@ class RecurrentInference(nn.Module):
         return steer_logits, speed_logits, macro_logits, h_next, c_next
 
 def main():
-    weights_path = Path('/home/diana/盲人寻路/pipeline_out/policy_weights.pth')
+    current_dir = Path(__file__).parent
+    weights_path = current_dir / 'policy_weights.pth'
     if not weights_path.exists():
         print(f"Error: weights file not found at {weights_path}")
         return
@@ -82,7 +83,7 @@ def main():
     c = torch.zeros(1, 64, dtype=torch.float32)
     
     # 导出为 ONNX (指定输入输出名，采用标准 opset 11)
-    onnx_path = Path('/home/diana/盲人寻路/pipeline_out/policy.onnx')
+    onnx_path = current_dir / 'policy.onnx'
     torch.onnx.export(
         inference_model,
         (x, h, c),
@@ -94,7 +95,7 @@ def main():
     print(f"ONNX model successfully exported to {onnx_path}")
     
     # 导出为 TorchScript (.pt) 以便 pnnx 转换
-    pt_path = Path('/home/diana/盲人寻路/pipeline_out/policy.pt')
+    pt_path = current_dir / 'policy.pt'
     traced_model = torch.jit.trace(inference_model, (x, h, c))
     traced_model.save(str(pt_path))
     print(f"TorchScript model successfully exported to {pt_path}")

@@ -1,6 +1,15 @@
 fn main() {
-    // 指定静态库 libncnn.a 的构建搜索目录
-    println!("cargo:rustc-link-search=native=/home/diana/盲人寻路/pipeline_out/ncnn_source/build/src");
+    // 获取当前 Cargo 工程根目录，动态拼接并定位静态库 libncnn.a 路径
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let ncnn_lib_dir = std::path::Path::new(&manifest_dir)
+        .parent()
+        .unwrap()
+        .join("pipeline_out")
+        .join("ncnn_source")
+        .join("build")
+        .join("src");
+    
+    println!("cargo:rustc-link-search=native={}", ncnn_lib_dir.display());
     
     // 静态链接 ncnn
     println!("cargo:rustc-link-lib=static=ncnn");

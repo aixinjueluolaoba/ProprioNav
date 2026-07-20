@@ -1,8 +1,10 @@
 import onnx
+from pathlib import Path
 
 def main():
-    onnx_path = "/home/diana/盲人寻路/pipeline_out/policy.onnx"
-    output_path = "/home/diana/盲人寻路/pipeline_out/policy_cleaned.onnx"
+    current_dir = Path(__file__).parent
+    onnx_path = str(current_dir / "policy.onnx")
+    output_path = str(current_dir / "policy_cleaned.onnx")
     
     model = onnx.load(onnx_path)
     graph = model.graph
