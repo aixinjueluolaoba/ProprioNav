@@ -41,7 +41,7 @@ void nav_free(void* nav);
 仓库包含可直接接入的 Android AAR、Kotlin 封装和最小示例应用，支持 Android 7.0
 （API 24）及以上：
 
-- `android/dist/proprionav-v3-arm64.aar`：Release AAR，内含模型、JNI 和 arm64 SO。
+- `android/dist/proprionav-v3-arm64.aar`：Release AAR，内含模型、JNI、arm64 SO 与 C++ 运行时。
 - `android/dist/proprionav-sample-arm64-debug.apk`：可安装的最小示例 APK。
 - `android/proprionav/`：AAR 源码。
 - `android/sample/`：Kotlin 接入范例。

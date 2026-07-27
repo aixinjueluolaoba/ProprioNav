@@ -2,6 +2,7 @@
 
 当前 Android 版本支持 `arm64-v8a`、Android 7.0（API 24）及以上。`proprionav`
 模块生成可直接接入其他应用的 AAR，`sample` 模块是最小可运行示例。
+NCNN、Rust SO、JNI、模型与 `libc++_shared.so` 均已打包进 AAR。
 
 ## 构建
 

@@ -23,8 +23,8 @@ fn main() {
     println!("cargo:rustc-link-lib=static=ncnn");
 
     if target_os == "android" {
-        // Android 构建使用 NCNN_OPENMP=OFF，并把 libc++ 静态并入最终 SO。
-        println!("cargo:rustc-link-lib=static=c++_static");
+        // Android 构建使用 NCNN_OPENMP=OFF；libc++_shared 随 AAR 一起打包。
+        println!("cargo:rustc-link-lib=dylib=c++_shared");
         println!("cargo:rustc-link-lib=dylib=android");
         println!("cargo:rustc-link-lib=dylib=jnigraphics");
         println!("cargo:rustc-link-lib=dylib=log");

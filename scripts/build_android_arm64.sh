@@ -14,6 +14,7 @@ TOOLCHAIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64"
 CLANG="${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang"
 AR="${TOOLCHAIN}/bin/llvm-ar"
 STRIP="${TOOLCHAIN}/bin/llvm-strip"
+CXX_SHARED="${TOOLCHAIN}/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
 OUTPUT_DIR="${ROOT}/android/proprionav/src/main/jniLibs/arm64-v8a"
 
 if [[ -z "${NDK}" || ! -x "${CLANG}" ]]; then
@@ -63,6 +64,7 @@ cargo build \
 mkdir -p "${OUTPUT_DIR}"
 cp "${ROOT}/ncnn_rust/target/aarch64-linux-android/release/libncnn_rust.so" \
     "${OUTPUT_DIR}/libncnn_rust.so"
+cp "${CXX_SHARED}" "${OUTPUT_DIR}/libc++_shared.so"
 "${STRIP}" --strip-unneeded "${OUTPUT_DIR}/libncnn_rust.so"
 
 echo "Android arm64-v8a SO: ${OUTPUT_DIR}/libncnn_rust.so"
