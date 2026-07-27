@@ -2,26 +2,34 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.playwright-mcp/
 
 # Rust 编译输出目录
 ncnn_rust/target/
 Cargo.lock
 
-# 视频评估大文件与模型二进制权重
+# 评估与训练临时产物
 *.mp4
 eval_out/
 pipeline_out/*.mp4
+pipeline_out/*.png
+pipeline_out/*.log
+pipeline_out/*.jsonl
 
-# 模型权重大文件
+# 只提交当前 V3 权重和 NCNN 模型
 pipeline_out/policy_weights.pth
+pipeline_out/policy_weights_*.pth
+!pipeline_out/policy_weights_v3_hybrid_sharp.pth
 pipeline_out/policy.onnx
 pipeline_out/policy_cleaned.onnx
 pipeline_out/policy.pt
 pipeline_out/policy.bin
-pipeline_out/libncnn_rust.so
+!pipeline_out/policy.bin
+pipeline_out/*.so
 pipeline_out/policy.*.bin
 pipeline_out/policy.*.param
 pipeline_out/policy.*.onnx
+pipeline_out/policy_v3*
 
 # NCNN 编译源码与构建树
 pipeline_out/ncnn_source/

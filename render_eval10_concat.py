@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import math
 import subprocess
 from pathlib import Path
@@ -10,28 +9,28 @@ import numpy as np
 from matplotlib.animation import FFMpegWriter
 from matplotlib.patches import Polygon, Wedge
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from stable_baselines3 import SAC
-
-from blind_nav_rl import BlindNavEnv
-from blind_nav_rl.env import TreeObstacle
-
-
-def obstacle_bounds(env: BlindNavEnv) -> tuple[float, float, float, float]:
+def obstacle_bounds(env) -> tuple[float, float, float, float]:
     xs: list[float] = []
     ys: list[float] = []
-    for obstacle in env.obstacles:
-        if isinstance(obstacle, TreeObstacle):
-            xs.extend([obstacle.x - obstacle.radius, obstacle.x + obstacle.radius])
-            ys.extend([obstacle.y - obstacle.radius, obstacle.y + obstacle.radius])
-        else:
-            xs.extend(obstacle.vertices[:, 0].tolist())
-            ys.extend(obstacle.vertices[:, 1].tolist())
+    if hasattr(env, "tree_centers"):
+        t_centers = env.tree_centers
+        xs.extend((t_centers[:, 0] - 28.0).tolist() + (t_centers[:, 0] + 28.0).tolist())
+        ys.extend((t_centers[:, 1] - 28.0).tolist() + (t_centers[:, 1] + 28.0).tolist())
+    if hasattr(env, "mountain_vertices"):
+        m_verts = env.mountain_vertices
+        xs.extend(m_verts[..., 0].flatten().tolist())
+        ys.extend(m_verts[..., 1].flatten().tolist())
+    if hasattr(env, "low_centers"):
+        l_centers = env.low_centers
+        xs.extend((l_centers[:, 0] - 16.0).tolist() + (l_centers[:, 0] + 16.0).tolist())
+        ys.extend((l_centers[:, 1] - 16.0).tolist() + (l_centers[:, 1] + 16.0).tolist())
     if not xs:
-        return -1000.0, 1000.0, -1000.0, 1000.0
+        half = getattr(env, "world_size", 1000.0) / 2.0
+        return -half, half, -half, half
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def add_stop_range(ax, env: BlindNavEnv, *, compact: bool = False) -> None:
+def add_stop_range(ax, env, *, compact: bool = False) -> None:
     tolerance = float(getattr(env, "stop_distance_tolerance", 0.0))
     center = (float(env.target[0]), float(env.target[1]))
     outer = float(env.desired_stop_distance) + max(tolerance, 0.0)
@@ -90,7 +89,7 @@ def angle_error_to_target(point: np.ndarray, target: np.ndarray, heading: float)
 
 
 def render_episode_video(
-    env: BlindNavEnv,
+    env,
     path: np.ndarray,
     total_reward: float,
     output: Path,
@@ -99,7 +98,7 @@ def render_episode_video(
     headings: np.ndarray | None = None,
     view_scale: float = 1.0,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(8, 8), dpi=140)
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=90)
     fig.patch.set_facecolor("#f8fafc")
     ax.set_facecolor("#fbfaf5")
     ax.set_aspect("equal", adjustable="box")
@@ -129,12 +128,14 @@ def render_episode_video(
     arrow_len = max(18.0, min(34.0, view_span * 0.018))
     arrow_width = arrow_len * 0.62
 
-    for obstacle in env.obstacles:
-        if isinstance(obstacle, TreeObstacle):
+    # 绘制树木 (Trees)
+    if hasattr(env, "tree_centers"):
+        t_centers = env.tree_centers
+        for idx in range(len(t_centers)):
             ax.add_patch(
                 plt.Circle(
-                    (obstacle.x, obstacle.y),
-                    obstacle.radius,
+                    (t_centers[idx, 0], t_centers[idx, 1]),
+                    getattr(env, "tree_radius", 28.0),
                     facecolor="#4f8f4f",
                     edgecolor="#276749",
                     alpha=0.48,
@@ -143,10 +144,13 @@ def render_episode_video(
                     zorder=1,
                 )
             )
-        else:
+    # 绘制多边形大山 (Mountains)
+    if hasattr(env, "mountain_vertices"):
+        m_verts = env.mountain_vertices
+        for idx in range(len(m_verts)):
             ax.add_patch(
                 plt.Polygon(
-                    obstacle.vertices,
+                    m_verts[idx],
                     closed=True,
                     facecolor="#6b6258",
                     edgecolor="#3f3a34",
@@ -156,7 +160,22 @@ def render_episode_video(
                     zorder=1,
                 )
             )
-
+    # 绘制可跳跃矮桩 (Low obstacles)
+    if hasattr(env, "low_centers"):
+        l_centers = env.low_centers
+        for idx in range(len(l_centers)):
+            ax.add_patch(
+                plt.Circle(
+                    (l_centers[idx, 0], l_centers[idx, 1]),
+                    getattr(env, "low_radius", 16.0),
+                    facecolor="#d97706",
+                    edgecolor="#b45309",
+                    alpha=0.60,
+                    linewidth=0.7,
+                    fill=True,
+                    zorder=1,
+                )
+            )
     add_stop_range(ax, env)
     ax.scatter(path[0, 0], path[0, 1], color="#16a34a", s=marker_size, marker="o", zorder=5)
     ax.scatter(env.target[0], env.target[1], color="#dc2626", s=marker_size * 1.15, marker="x", linewidths=1.6, zorder=6)
@@ -218,9 +237,9 @@ def render_episode_video(
     target_title = target_ax.set_title("target", fontsize=8, color="#92400e", pad=2)
 
     repeat_each_step = max(1, int(round(env.dt * fps)))
-    writer = FFMpegWriter(fps=fps, metadata={"title": "BlindNav eval"})
+    writer = FFMpegWriter(fps=fps, codec="libx264", extra_args=["-preset", "ultrafast", "-threads", "0", "-pix_fmt", "yuv420p"], metadata={"title": "BlindNav eval"})
 
-    with writer.saving(fig, str(output), dpi=140):
+    with writer.saving(fig, str(output), dpi=90):
         for frame_idx in range(len(path)):
             trail.set_data(path[: frame_idx + 1, 0], path[: frame_idx + 1, 1])
             heading = float(headings[frame_idx]) if headings is not None and frame_idx < len(headings) else float(env.heading)
@@ -238,10 +257,12 @@ def render_episode_video(
                 f"target zoom | angle {angle_err_deg:+.1f}deg "
                 f"({'ok' if angle_ok else 'off'}) | {'STOP' if stop_ok else 'move'}"
             )
+            from datetime import datetime
+            now_str = datetime.now().strftime("%H:%M:%S")
             title.set_text(
-                f"step={frame_idx} dist={dist:.1f} stop={env.desired_stop_distance:.1f} "
-                f"stop_err={stop_err:.1f}/{env.stop_distance_tolerance:.1f} "
-                f"angle_err={angle_err_deg:+.1f}deg/{math.degrees(env.align_angle_tolerance):.1f}deg "
+                f"[{now_str} PURE-RL] step={frame_idx} dist={dist:.1f} "
+                f"stop_err={stop_err:.1f} "
+                f"angle_err={angle_err_deg:+.1f}deg "
                 f"STOP={'yes' if stop_ok else 'no'}"
             )
             for _ in range(repeat_each_step):
@@ -251,119 +272,49 @@ def render_episode_video(
     plt.close(fig)
 
 
-def run_eval(
-    model: SAC,
-    seed: int,
-    *,
-    tree_count: int,
-    mountain_count: int,
-    tree_radius: float,
-    max_steps: int,
-) -> tuple[BlindNavEnv, np.ndarray, np.ndarray, float]:
-    env = BlindNavEnv(
-        seed=seed,
-        tree_count=tree_count,
-        mountain_count=mountain_count,
-        tree_radius=tree_radius,
-        max_steps=max_steps,
-    )
-    obs, _ = env.reset(seed=seed)
-    path = [env.pos.copy()]
-    headings = [env.heading]
-    total_reward = 0.0
-    terminated = False
-    truncated = False
-    while not (terminated or truncated):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        path.append(env.pos.copy())
-        headings.append(env.heading)
-        total_reward += float(reward)
-    return env, np.asarray(path), np.asarray(headings, dtype=np.float32), total_reward
-
+def check_video_valid(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 1024:
+        return False
+    try:
+        res = subprocess.run(["ffprobe", "-v", "error", str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return res.returncode == 0
+    except Exception:
+        return True
 
 def concat_and_compress(videos: list[Path], output_concat: Path, output_compressed: Path, *, fps: int) -> None:
-    concat_list = output_concat.parent / "concat_list.txt"
-    concat_list.write_text("".join(f"file '{v.resolve()}'\n" for v in videos), encoding="utf-8")
+    # 过滤不存在、损坏或无 moov atom 的无效 mp4 文件
+    valid_videos = [v.resolve() for v in videos if check_video_valid(v)]
+    if not valid_videos:
+        print("[警告] 没有找到有效的单帧 MP4 视频，跳过拼接。")
+        return
+    import shutil
+    out_comp_abs = output_compressed.resolve()
+    out_concat_abs = output_concat.resolve()
 
-    subprocess.run(
-        [
+    if len(valid_videos) == 1:
+        cmd = ["ffmpeg", "-y", "-i", str(valid_videos[0]), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(out_comp_abs)]
+    else:
+        inputs = []
+        for v in valid_videos:
+            inputs.extend(["-i", str(v)])
+        filter_spec = "".join(f"[{i}:v]" for i in range(len(valid_videos))) + f"concat=n={len(valid_videos)}:v=1:a=0[outv]"
+        cmd = [
             "ffmpeg",
             "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_list),
-            "-c",
-            "copy",
-            str(output_concat),
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(output_concat),
-            "-vf",
-            f"fps={fps}",
+            *inputs,
+            "-filter_complex",
+            filter_spec,
+            "-map",
+            "[outv]",
             "-c:v",
             "libx264",
-            "-crf",
-            "28",
             "-preset",
-            "fast",
+            "ultrafast",
+            "-threads",
+            "0",
             "-pix_fmt",
             "yuv420p",
-            str(output_compressed),
-        ],
-        check=True,
-    )
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--episodes", type=int, default=10)
-    parser.add_argument("--seed-start", type=int, default=140001)
-    parser.add_argument("--tree-count", type=int, default=45)
-    parser.add_argument("--mountain-count", type=int, default=8)
-    parser.add_argument("--tree-radius", type=float, default=28.0)
-    parser.add_argument("--max-steps", type=int, default=240)
-    parser.add_argument("--fps", type=int, default=20)
-    args = parser.parse_args()
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model = SAC.load(args.model, device="cpu")
-
-    episode_videos: list[Path] = []
-    for i in range(args.episodes):
-        seed = args.seed_start + i
-        env, path, headings, reward_sum = run_eval(
-            model,
-            seed,
-            tree_count=args.tree_count,
-            mountain_count=args.mountain_count,
-            tree_radius=args.tree_radius,
-            max_steps=args.max_steps,
-        )
-        output_video = out_dir / f"eval_{i+1:02d}.mp4"
-        render_episode_video(env, path, reward_sum, output_video, fps=args.fps, headings=headings)
-        dist = float(np.linalg.norm(env.target - path[-1]))
-        print(f"eval={i+1} seed={seed} steps={len(path)-1} reward={reward_sum:.3f} final_distance={dist:.3f} video={output_video}", flush=True)
-        episode_videos.append(output_video)
-
-    concat_mp4 = out_dir / "eval10_concat.mp4"
-    compressed_mp4 = out_dir / "eval10_concat_compressed.mp4"
-    concat_and_compress(episode_videos, concat_mp4, compressed_mp4, fps=args.fps)
-    print(f"concat={concat_mp4}", flush=True)
-    print(f"compressed={compressed_mp4}", flush=True)
-
-
-if __name__ == "__main__":
-    main()
+            str(out_comp_abs),
+        ]
+    subprocess.run(cmd, check=True)
+    shutil.copyfile(out_comp_abs, out_concat_abs)

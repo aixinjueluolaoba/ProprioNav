@@ -1,150 +1,112 @@
-# 🌲 ProprioNav (基于本体感知反馈的盲区导航系统)
+# ProprioNav
 
-本工程是针对 2D Gymnasium 盲区导航强化学习（RL）策略模型的轻量级 NCNN 推理部署与 Rust 绑定工程。
-基于带有 LSTM 隐状态的 Recurrent PPO 策略网络，我们将其重构并转换为 NCNN 模型格式（FP16 半精度优化），使用 Rust 编写高性能 FFI 桥接接口并打包为动态链接库 `.so`，最后通过 Python 实现了高精度的 ctypes 自动化回归测试。
+仅依赖自身位置、目标位置和人物朝向的盲区导航策略。当前 V3 使用 10 维本体感知观测和
+LSTM，空旷区贴近目标直行，碰撞或停滞后切换为朝向相对绕行。跳跃不再使用不稳定的神经
+网络动作头，而由共享库根据连续位置反馈执行一次试跳、失败冷却和绕行。
 
----
+1024 局 hard 仿真评估：成功率 96.7%，成功局中位 52 步，中位路径比 1.09。
 
-## 🗺️ 部署目录结构
+## 目录
 
 ```text
-ProprioNav/
-├── ncnn_rust/                 # Rust 编译工程
-│   ├── Cargo.toml             # Rust 依赖与 cdylib（动态库）配置
-│   ├── build.rs               # 静态链接 libncnn.a 并关联系统动态库
-│   └── src/
-│       └── lib.rs             # C-API FFI 导出与 NCNN 零拷贝推理逻辑
-│
-├── pipeline_out/              # 模型资产与部署产物输出目录
-│   ├── policy_weights.pth     # 原始 PyTorch 训练权重 (PPO 策略模型)
-│   ├── export_onnx.py         # PyTorch 重构导出 ONNX & TorchScript 脚本
-│   ├── policy.pt              # TorchScript 追踪模型
-│   ├── policy.param           # PNNX 转换输出的 NCNN 网络描述文件 (已包含 FP16 参数)
-│   ├── policy.bin             # PNNX 转换输出的 NCNN 权重文件 (已包含 FP16 参数)
-│   ├── libncnn_rust.so        # 最终编译生成的高性能 Rust 动态链接库 (已打包 AVX-512)
-│   └── test_inference.py      # Python 自动化精度比对验证脚本
-│
-└── README.md                  # 本说明文档
+.
+├── run_pipeline.py                    # GPU 向量化训练与视频评估
+├── render_eval10_concat.py            # 当前环境的视频渲染工具
+├── ncnn_rust/
+│   ├── include/proprionav.h           # 稳定 C ABI
+│   ├── src/lib.rs                     # NCNN 推理与内部导航状态
+│   └── build.rs
+├── pipeline_out/
+│   ├── policy_weights_v3_hybrid_sharp.pth
+│   ├── policy.param / policy.bin      # 当前 FP32 NCNN 模型
+│   ├── export_v3_ncnn.py
+│   ├── eval_2d_metrics.py
+│   ├── test_inference.py
+│   └── test_nav_api.py
+└── examples/
+    └── fastapi_server.py
 ```
 
----
+`libncnn_rust.so` 是本地构建产物，不提交到 Git。
 
-## 🔄 模型转换流水线 (Model Conversion Pipeline)
+## SO 接口
 
-### 1. PyTorch 模型重构
-由于 PyTorch 的 `nn.LSTM` 默认导出的 ONNX 会生成复杂的 runtime 转置和切片，导致标准的 `onnx2ncnn` 无法正确识别其常量权重，在 `.bin` 中导出为空权重（2=0）。
-我们在 `pipeline_out/export_onnx.py` 中，在数学上等价地将单步 LSTM 推理展开为标准的矩阵乘法和基本逻辑：
-* 在构造函数 `__init__` 中提前对权重进行转置：
-  ```python
-  self.W_ih_t = nn.Parameter(model.lstm.weight_ih_l0.clone().t())
-  self.W_hh_t = nn.Parameter(model.lstm.weight_hh_l0.clone().t())
-  ```
-* 在 `forward` 阶段直接进行 `torch.matmul`：
-  ```python
-  gates = torch.matmul(x, self.W_ih_t) + self.b_ih + torch.matmul(h, self.W_hh_t) + self.b_hh
-  ```
-消除了任何动态 `Transpose` 节点后，导出的模型能够被完全静态解析。
+推荐只使用 `ncnn_rust/include/proprionav.h` 中的高层接口：
 
-### 2. 使用 PNNX 转换 (FP16 优化)
-我们直接将模型导出为 TorchScript 格式（`policy.pt`），并使用 NCNN 官方推荐的最先进的 **PNNX** 转换器一键生成 NCNN 参数与模型：
+```c
+void* nav_init(const char* param_path, const char* bin_path);
+
+int nav_step(
+    void* nav,
+    float pos_x, float pos_y,
+    float target_x, float target_y,
+    float heading,
+    float* direction,
+    float* speed,
+    int* jump
+);
+
+void nav_free(void* nav);
+```
+
+调用方每个决策周期反馈最新位置和朝向即可。库内部维护 LSTM、碰撞/停滞推断、hybrid
+恢复与跳跃冷却；输出方向为弧度，速度为 50 或 100，跳跃为 0/1。当前策略按 `dt=0.3`
+训练，`direction` 已应用每步最大 45° 的转向限制。
+
+## 训练和快速评估
+
+依赖 Python、PyTorch、NumPy、Matplotlib 和 FFmpeg。默认配置已对齐 V3：
+`hidden=96`、`actor=48`、`hard collision`、`hybrid h10`、`jump_probe`。
+
 ```bash
-pnnx pipeline_out/policy.pt inputshape=[1,12],[1,64],[1,64]
+# 从头训练时使用新的权重名，避免续训正式权重
+python run_pipeline.py --train-only \
+  --episodes 1000000 \
+  --weights-name policy_weights_candidate.pth
+
+# 快速批量指标评估
+python pipeline_out/eval_2d_metrics.py \
+  --weights pipeline_out/policy_weights_v3_hybrid_sharp.pth \
+  --action-mode hybrid \
+  --hybrid-free-max-deg 10 \
+  --obstacle-signal-mode jump_probe \
+  --jump-controller probe \
+  --episodes 1024
+
+# 生成训练仿真环境评估视频
+python run_pipeline.py --eval-only --no-play
 ```
-PNNX 默认启用了 **FP16** 精度的网络优化，成功将浮点模型权重无损地压缩至 `45KB` 左右。之后复制为标准名称：
-* `policy.param`
-* `policy.bin`
 
----
+## 导出 NCNN
 
-## 🦀 Rust 推理共享库 (ncnn_rust)
+使用 FP32。FP16 的连续误差虽小，但可能改变离散动作的 argmax。
 
-### 1. FFI C-API 接口定义
-Rust 库 `ncnn_rust/src/lib.rs` 通过 FFI 声明并封装了 NCNN 内部的 C-API 符号，实现了全管道零拷贝：
-* **`init_net`**
-  ```rust
-  #[no_mangle]
-  pub unsafe extern "C" fn init_net(param_path: *const c_char, bin_path: *const c_char) -> *mut c_void
-  ```
-  输入 `.param` 和 `.bin` 路径，实例化 `ncnn::Net` 并完成参数及模型装载。成功返回句柄指针，失败返回 NULL。
-
-* **`free_net`**
-  ```rust
-  #[no_mangle]
-  pub unsafe extern "C" fn free_net(net_ptr: *mut c_void)
-  ```
-  释放 `ncnn::Net` 实例，安全清理 C 堆内存。
-
-* **`run_inference`**
-  ```rust
-  #[no_mangle]
-  pub unsafe extern "C" fn run_inference(
-      net_ptr: *mut c_void,
-      x: *const f32,             // 观测向量 (float[12])
-      h_in: *const f32,          // 输入隐藏状态 (float[64])
-      c_in: *const f32,          // 输入细胞状态 (float[64])
-      steer_logits: *mut f32,    // 舵角输出 logits (float[5])
-      speed_logits: *mut f32,    // 速度输出 logits (float[2])
-      macro_logits: *mut f32,    // 宏动作输出 logits (float[8])
-      h_out: *mut f32,           // 更新后的隐藏状态写入区 (float[64])
-      c_out: *mut f32,           // 更新后的细胞状态写入区 (float[64])
-  ) -> i32
-  ```
-  执行前向计算。内部通过 `ncnn_mat_create_external_1d` 实现传入内存数据的**零拷贝绑定**，并在推理完毕后安全销毁提取器和中间 Mat 临时变量。成功返回 `0`。
-
-### 2. 编译指南
-为了避免开发环境中的 linker 符号重定向报错（例如 `unknown option -m64`），请使用真实的系统 GCC 编译器作为后端链接器进行编译：
 ```bash
-cd ncnn_rust
-RUSTFLAGS="-C linker=/usr/bin/gcc" cargo build --release
+python pipeline_out/export_v3_ncnn.py
+pnnx pipeline_out/policy_v3.pt \
+  'inputshape=[1,10],[1,96],[1,96]' fp16=0
+cp pipeline_out/policy_v3.ncnn.param pipeline_out/policy.param
+cp pipeline_out/policy_v3.ncnn.bin pipeline_out/policy.bin
 ```
-编译产物会生成在 `target/release/libncnn_rust.so`，由于静态打包了 NCNN 内部的全部向量化计算库（支持系统 AVX-512 SIMD 并行加速），其大小约为 16MB。编译完成后可直接拷贝至 `pipeline_out/` 目录。
 
----
+## 构建共享库
 
-## 🐍 Python 自动化精度比对 (Python test code)
+`build.rs` 期望静态库位于 `pipeline_out/ncnn_source/build/src/libncnn.a`。准备 NCNN 后执行：
 
-测试验证脚本 `pipeline_out/test_inference.py` 使用 `ctypes` 装载 Rust 动态库并和原生的 PyTorch 执行对齐校验：
+```bash
+RUSTFLAGS="-C linker=/usr/bin/gcc" cargo build \
+  --manifest-path ncnn_rust/Cargo.toml --release
+cp ncnn_rust/target/release/libncnn_rust.so pipeline_out/
+```
 
-### 运行方式
+共享库只依赖标准 C/C++、数学库和 GNU OpenMP，不依赖 protobuf 运行时。
+
+## 验证
+
 ```bash
 python pipeline_out/test_inference.py
+python pipeline_out/test_nav_api.py
 ```
 
-### 验证精度报告示例
-在相同的随机数输入下，PyTorch 浮点精度与经过 PNNX FP16 浮点优化转换后的 NCNN 推理结果对齐精度偏差如下（最大绝对差限制在 `1e-3` 以下）：
-```text
-================== 🌲 PyTorch VS NCNN 推理一致性验证 🌲 ==================
-
---- 1. steer_logits 比对 ---
-PyTorch: [-0.25599557  0.3966241   0.03859585  0.07449278 -0.11496811]
-NCNN   : [-0.255881    0.39641744  0.03866953  0.07448566 -0.11482652]
-Max Abs Diff: 0.000207
-
---- 2. speed_logits 比对 ---
-PyTorch: [-0.1282038   0.10113877]
-NCNN   : [-0.1281742   0.10108508]
-Max Abs Diff: 0.000054
-
---- 3. macro_logits 比对 ---
-PyTorch: [-0.05721664 -0.12095418 -0.09497169  0.06450429  0.16704914 -0.17184229
-  0.20102794 -0.15634519]
-NCNN   : [-0.05725737 -0.12096433 -0.0949143   0.06440697  0.16704965 -0.17185226
-  0.20095643 -0.15621693]
-Max Abs Diff: 0.000128
-
---- 4. h_next 比对 (部分前 5 维数据展示) ---
-PyTorch: [-0.15412176 -0.24694636 -0.14697811 -0.60128635 -0.3198939 ]
-NCNN   : [-0.15404864 -0.24690773 -0.14692682 -0.60118216 -0.31991163]
-Max Abs Diff: 0.000134
-
---- 5. c_next 比对 (部分前 5 维数据展示) ---
-PyTorch: [-0.18451998 -0.47837177 -0.2880792  -1.2733505  -0.56230444]
-NCNN   : [-0.1844478  -0.47834173 -0.2879503  -1.2731442  -0.56231123]
-Max Abs Diff: 0.000354
-
-==============================================================
-🎉 验证通过！PyTorch 与 Rust-NCNN 推理结果高度一致！最大偏差: 0.000354
-==============================================================
-```
-
-数据表明，PNNX 生成的压缩版 FP16 模型在节省一倍显存的同时，输出偏差（~0.0003）完全处于高精度安全部署范围内，可无缝平替原本的 PyTorch 在线寻路组件。
+前者对齐 PyTorch 与 NCNN 的 logits/LSTM 状态，后者逐步对齐高层 `nav_step` 的方向、
+速度和跳跃控制。HTTP 接入示例见 `examples/README.md`。
