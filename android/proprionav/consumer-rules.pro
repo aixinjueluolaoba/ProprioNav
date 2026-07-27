@@ -1,0 +1,2 @@
+-keep class com.proprionav.ProprioNav { *; }
+-keep class com.proprionav.NavOutput { *; }

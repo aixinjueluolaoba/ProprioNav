@@ -16,7 +16,7 @@
 
 ## 核心 C ABI 接口
 
-头文件位于 [proprionav.h](file:///home/diana/盲人寻路/ncnn_rust/include/proprionav.h)：
+头文件位于 [proprionav.h](ncnn_rust/include/proprionav.h)：
 
 ```c
 void* nav_init(const char* param_path, const char* bin_path);
@@ -33,6 +33,30 @@ void nav_free(void* nav);
 ```
 
 调用方每个决策周期反馈当前位置和朝向即可。共享库内部自动维护 LSTM 隐状态、碰撞/停滞推断、Hybrid 绕行与跳跃冷却。
+
+---
+
+## Android arm64-v8a
+
+仓库包含可直接接入的 Android AAR、Kotlin 封装和最小示例应用，支持 Android 7.0
+（API 24）及以上：
+
+- `android/dist/proprionav-v3-arm64.aar`：Release AAR，内含模型、JNI 和 arm64 SO。
+- `android/dist/proprionav-sample-arm64-debug.apk`：可安装的最小示例 APK。
+- `android/proprionav/`：AAR 源码。
+- `android/sample/`：Kotlin 接入范例。
+
+```kotlin
+val nav = ProprioNav.fromAssets(context)
+val action = nav.step(playerX, playerY, goalX, goalY, headingRadians)
+
+move(action.direction, action.speed)
+if (action.jump) jump()
+
+nav.close()
+```
+
+完整构建与接入说明见 [android/README.md](android/README.md)。
 
 ---
 
@@ -79,6 +103,10 @@ python pipeline_out/test_nav_api.py     # C ABI 状态对齐
 ├── architecture_hand_drawn.png        # 手绘风格系统架构图
 ├── run_pipeline.py                    # GPU 向量化训练与评估
 ├── render_eval10_concat.py            # 视频渲染工具
+├── android/
+│   ├── dist/                           # AAR 与示例 APK
+│   ├── proprionav/                     # JNI/Kotlin Android 库
+│   └── sample/                         # 最小示例应用
 ├── ncnn_rust/
 │   ├── include/proprionav.h           # 公共 C ABI 头文件
 │   └── src/lib.rs                     # 有状态导航核心引擎
@@ -87,5 +115,5 @@ python pipeline_out/test_nav_api.py     # C ABI 状态对齐
 │   ├── test_inference.py              # 底层推理测试
 │   └── test_nav_api.py                # C ABI 测试
 └── examples/
-    └── fastapi_server.py              # RESTful HTTP 桥接服务
+    └── fastapi_server.py               # Python RESTful HTTP 桥接服务
 ```

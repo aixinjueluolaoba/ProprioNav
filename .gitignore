@@ -33,3 +33,9 @@ pipeline_out/policy_v3*
 
 # NCNN 编译源码与构建树
 pipeline_out/ncnn_source/
+
+# Android/Gradle 构建缓存
+android/.gradle/
+android/local.properties
+android/**/build/
+android/**/.cxx/

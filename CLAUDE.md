@@ -21,6 +21,10 @@ deployment library.
 - `pipeline_out/export_v3_ncnn.py`: V3 TorchScript exporter.
 - `ncnn_rust/src/lib.rs`: low-level inference and high-level stateful navigation ABI.
 - `ncnn_rust/include/proprionav.h`: public C header.
+- `scripts/build_android_arm64.sh`: NCNN/Rust Android cross-build.
+- `android/proprionav`: arm64-v8a AAR module with JNI/Kotlin wrapper.
+- `android/sample`: minimal Android integration app.
+- `android/dist`: checked release AAR and sample APK.
 - `pipeline_out/test_inference.py`: low-level parity test.
 - `pipeline_out/test_nav_api.py`: high-level parity test.
 
@@ -37,7 +41,12 @@ RUSTFLAGS="-C linker=/usr/bin/gcc" cargo build \
 
 python pipeline_out/test_inference.py
 python pipeline_out/test_nav_api.py
+
+ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125" \
+  bash scripts/build_android_arm64.sh
+cd android && ./gradlew :proprionav:assembleRelease :sample:assembleDebug
 ```
 
-`libncnn_rust.so`, videos, logs, PNNX intermediates, NCNN source and Rust build
-outputs are generated locally and intentionally ignored.
+The Linux `pipeline_out/libncnn_rust.so`, videos, logs, PNNX intermediates,
+NCNN source and build directories are generated locally and ignored. The checked
+Android arm64 SO and release artifacts are intentional deployment assets.

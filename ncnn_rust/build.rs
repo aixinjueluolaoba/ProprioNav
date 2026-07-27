@@ -1,21 +1,39 @@
 fn main() {
-    // 获取当前 Cargo 工程根目录，动态拼接并定位静态库 libncnn.a 路径
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let ncnn_lib_dir = std::path::Path::new(&manifest_dir)
-        .parent()
-        .unwrap()
-        .join("pipeline_out")
-        .join("ncnn_source")
-        .join("build")
-        .join("src");
-    
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let default_build_dir = if target_os == "android" {
+        "build-android-arm64"
+    } else {
+        "build"
+    };
+    let ncnn_lib_dir = std::env::var_os("NCNN_LIB_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(&manifest_dir)
+                .parent()
+                .unwrap()
+                .join("pipeline_out")
+                .join("ncnn_source")
+                .join(default_build_dir)
+                .join("src")
+        });
+
+    println!("cargo:rerun-if-env-changed=NCNN_LIB_DIR");
     println!("cargo:rustc-link-search=native={}", ncnn_lib_dir.display());
-    
-    // 静态链接 ncnn
     println!("cargo:rustc-link-lib=static=ncnn");
-    
-    // 动态链接编译依赖的 GNU OpenMP、C++ 标准库和数学库
-    println!("cargo:rustc-link-lib=dylib=gomp");
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-    println!("cargo:rustc-link-lib=dylib=m");
+
+    if target_os == "android" {
+        // Android 构建使用 NCNN_OPENMP=OFF，并把 libc++ 静态并入最终 SO。
+        println!("cargo:rustc-link-lib=static=c++_static");
+        println!("cargo:rustc-link-lib=dylib=android");
+        println!("cargo:rustc-link-lib=dylib=jnigraphics");
+        println!("cargo:rustc-link-lib=dylib=log");
+        println!("cargo:rustc-link-lib=dylib=m");
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-arg=-Wl,--exclude-libs,ALL");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=gomp");
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-lib=dylib=m");
+    }
 }
