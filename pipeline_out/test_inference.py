@@ -1,6 +1,6 @@
-"""Run the current V3 low-level NCNN consistency test."""
+"""Run the current V4 low-level NCNN consistency test."""
 
-from test_inference_v3 import main
+from test_inference_v4 import main
 
 
 if __name__ == "__main__":

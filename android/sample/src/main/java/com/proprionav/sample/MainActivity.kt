@@ -18,12 +18,12 @@ class MainActivity : Activity() {
                 posY = 0F,
                 targetX = 900F,
                 targetY = 500F,
-                heading = 0F,
+                positionAgeMs = 250F,
             )
         }
         val text = output.fold(
             onSuccess = {
-                "direction=${it.direction}\nspeed=${it.speed}\njump=${it.jump}"
+                "turnDelta=${it.turnDelta}\nspeed=${it.speed}\njump=${it.jump}"
             },
             onFailure = { "ProprioNav initialization failed:\n${it.message}" },
         )

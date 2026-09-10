@@ -1,6 +1,6 @@
-"""Run the current V3 simplified navigation API consistency test."""
+"""Run the current V4 unknown-heading navigation API consistency test."""
 
-from test_nav_api_v3 import main
+from test_nav_api_v4 import main
 
 
 if __name__ == "__main__":

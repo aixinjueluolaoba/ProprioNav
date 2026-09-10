@@ -1,6 +1,6 @@
 # Android 接入
 
-当前 Android 版本支持 `arm64-v8a`、Android 7.0（API 24）及以上。`proprionav`
+当前 Android V4 版本支持 `arm64-v8a`、Android 7.0（API 24）及以上。`proprionav`
 模块生成可直接接入其他应用的 AAR，`sample` 模块是最小可运行示例。
 NCNN、Rust SO、JNI、模型与 `libc++_shared.so` 均已打包进 AAR。
 
@@ -26,8 +26,8 @@ cd android
 
 仓库同时保留了已验证产物，可直接使用：
 
-- `dist/proprionav-v3-arm64.aar`
-- `dist/proprionav-sample-arm64-debug.apk`
+- `dist/proprionav-v4-arm64.aar`
+- `dist/proprionav-v4-sample-arm64-debug.apk`
 - `dist/SHA256SUMS`
 
 ## Kotlin 调用
@@ -42,10 +42,10 @@ val action = nav.step(
     posY = playerY,
     targetX = goalX,
     targetY = goalY,
-    heading = playerHeadingRadians,
+    positionAgeMs = positionAgeMs,
 )
 
-moveDirection = action.direction
+turnDelta = action.turnDelta
 moveSpeed = action.speed
 if (action.jump) {
     jump()
@@ -56,4 +56,5 @@ nav.close()
 ```
 
 每个角色或导航任务应持有独立的 `ProprioNav` 实例。每个决策周期必须传入执行上一条
-指令后的最新实际位置；碰撞、停滞、LSTM 和记忆状态全部由 SO 内部维护。
+指令后的实际位置以及该定位数据的年龄（毫秒）；不再传入角色朝向。碰撞、停滞、运动
+方向估计、延迟补偿、LSTM 和记忆状态全部由 SO 内部维护。

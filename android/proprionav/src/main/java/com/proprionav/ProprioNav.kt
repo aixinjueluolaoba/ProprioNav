@@ -4,7 +4,7 @@ import android.content.Context
 import java.io.File
 
 data class NavOutput(
-    val direction: Float,
+    val turnDelta: Float,
     val speed: Float,
     val jump: Boolean,
 )
@@ -16,12 +16,12 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
         posY: Float,
         targetX: Float,
         targetY: Float,
-        heading: Float,
+        positionAgeMs: Float,
     ): NavOutput {
         check(handle != 0L) { "ProprioNav session is closed" }
-        val values = nativeStep(handle, posX, posY, targetX, targetY, heading)
+        val values = nativeStep(handle, posX, posY, targetX, targetY, positionAgeMs)
         return NavOutput(
-            direction = values[0],
+            turnDelta = values[0],
             speed = values[1],
             jump = values[2] >= 0.5F,
         )
@@ -37,8 +37,8 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
 
     companion object {
         private const val ASSET_DIR = "proprionav"
-        private const val PARAM = "policy.param"
-        private const val BIN = "policy.bin"
+        private const val PARAM = "policy_v4.param"
+        private const val BIN = "policy_v4.bin"
 
         init {
             System.loadLibrary("ncnn_rust")
@@ -80,7 +80,7 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
             posY: Float,
             targetX: Float,
             targetY: Float,
-            heading: Float,
+            positionAgeMs: Float,
         ): FloatArray
 
         @JvmStatic

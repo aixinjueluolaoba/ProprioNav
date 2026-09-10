@@ -32,6 +32,15 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-arg=-Wl,--exclude-libs,ALL");
     } else {
+        // The Ubuntu NCNN package is built with Vulkan enabled. Its static
+        // archive leaves the shader compiler symbols for the final link.
+        println!("cargo:rustc-link-lib=static=glslang");
+        println!("cargo:rustc-link-lib=static=SPIRV");
+        println!("cargo:rustc-link-lib=static=MachineIndependent");
+        println!("cargo:rustc-link-lib=static=GenericCodeGen");
+        println!("cargo:rustc-link-lib=static=OSDependent");
+        println!("cargo:rustc-link-lib=static=glslang-default-resource-limits");
+        println!("cargo:rustc-link-lib=dylib=vulkan");
         println!("cargo:rustc-link-lib=dylib=gomp");
         println!("cargo:rustc-link-lib=dylib=stdc++");
         println!("cargo:rustc-link-lib=dylib=m");

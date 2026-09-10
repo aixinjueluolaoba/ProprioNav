@@ -2,15 +2,15 @@
 ProprioNav 极简 FastAPI 导航服务端
 ================================
 
-封装 pipeline_out/libncnn_rust.so 的高层 nav API (nav_init/nav_step/nav_free)，
-通过 HTTP 暴露。调用者每步只传「当前坐标、目标坐标、朝向」，
-库内部维护 LSTM、10 维观测、碰撞推断、hybrid 恢复与跳跃探测，
-输出方向 direction、速度 speed 和是否跳跃 jump。
+封装 pipeline_out/libncnn_rust.so 的高层 V4 nav API
+(nav_init/nav_step/nav_free)，通过 HTTP 暴露。调用者每步传「当前坐标、
+目标坐标、定位观测年龄」，库内部维护 LSTM、13 维观测、运动方向估计、
+碰撞推断、延迟补偿与跳跃探测，输出相对转向 turn_delta、速度 speed 和 jump。
 
 导航是有状态的（每步依赖上一步的 LSTM h/c 与时序累积量），因此按会话隔离：
   1) POST /nav/init    {}                           -> {session_id}
-  2) POST /nav/step    {session_id, pos_x, pos_y, target_x, target_y, heading}
-                                                   -> {direction, speed, jump}
+  2) POST /nav/step    {session_id, pos_x, pos_y, target_x, target_y, position_age_ms}
+                                                   -> {turn_delta, speed, jump}
   3) DELETE /nav/{session_id}                       -> {freed}
 
 启动：
@@ -71,12 +71,12 @@ class StepReq(BaseModel):
     pos_y: float = Field(..., description="当前 y 坐标")
     target_x: float = Field(..., description="目标 x 坐标")
     target_y: float = Field(..., description="目标 y 坐标")
-    heading: float = Field(..., description="当前朝向（弧度）")
+    position_age_ms: float = Field(..., ge=0.0, description="定位观测年龄（毫秒）")
 
 
 class StepResp(BaseModel):
-    direction: float = Field(..., description="移动方向（弧度，[-π,π]）")
-    speed: float = Field(..., description="建议速度（50 或 100 单位/步）")
+    turn_delta: float = Field(..., description="相对上一运动方向的转角（弧度）")
+    speed: float = Field(..., ge=0.0, le=100.0, description="定位新鲜度限速后的速度")
     jump: int = Field(..., ge=0, le=1, description="是否跳跃 0/1")
 
 
@@ -101,23 +101,23 @@ def nav_init() -> dict:
 
 @app.post("/nav/step", response_model=StepResp)
 def nav_step(req: StepReq) -> StepResp:
-    """单步导航：输入自身/目标坐标与朝向，输出方向、速度和跳跃。"""
+    """单步导航：输入坐标与定位年龄，输出相对转向、速度和跳跃。"""
     handle = _sessions.get(req.session_id)
     if handle is None:
         raise HTTPException(status_code=404, detail="无效或已过期的 session_id")
-    direction = ctypes.c_float(0.0)
+    turn_delta = ctypes.c_float(0.0)
     sp = ctypes.c_float(0.0)
     jump = ctypes.c_int(0)
     ret = lib.nav_step(
         handle,
         ctypes.c_float(req.pos_x), ctypes.c_float(req.pos_y),
         ctypes.c_float(req.target_x), ctypes.c_float(req.target_y),
-        ctypes.c_float(req.heading),
-        ctypes.byref(direction), ctypes.byref(sp), ctypes.byref(jump),
+        ctypes.c_float(req.position_age_ms),
+        ctypes.byref(turn_delta), ctypes.byref(sp), ctypes.byref(jump),
     )
     if ret != 0:
         raise HTTPException(status_code=500, detail=f"nav_step 失败：错误码 {ret}")
-    return StepResp(direction=direction.value, speed=sp.value, jump=jump.value)
+    return StepResp(turn_delta=turn_delta.value, speed=sp.value, jump=jump.value)
 
 
 @app.delete("/nav/{session_id}")

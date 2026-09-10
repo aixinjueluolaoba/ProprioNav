@@ -5,8 +5,8 @@ plugins {
 
 val generatedModelAssets = layout.buildDirectory.dir("generated/modelAssets")
 val prepareModelAssets by tasks.registering(Copy::class) {
-    from(rootProject.projectDir.parentFile.resolve("pipeline_out/policy.param"))
-    from(rootProject.projectDir.parentFile.resolve("pipeline_out/policy.bin"))
+    from(rootProject.projectDir.parentFile.resolve("pipeline_out/policy_v4.param"))
+    from(rootProject.projectDir.parentFile.resolve("pipeline_out/policy_v4.bin"))
     into(generatedModelAssets.map { it.dir("proprionav") })
 }
 

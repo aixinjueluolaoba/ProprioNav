@@ -14,7 +14,7 @@ import torch
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 
-from run_pipeline import GPUBlindNavEnvV11b, RecurrentActorCritic  # noqa: E402
+from run_pipeline import OBS_DIM, GPUBlindNavEnvV11b, RecurrentActorCritic  # noqa: E402
 
 
 def load_model(path: Path, device: str):
@@ -23,7 +23,7 @@ def load_model(path: Path, device: str):
     actor_width = state["actor_fc.0.weight"].shape[0]
     macro = "macro_head.weight" in state
     model = RecurrentActorCritic(
-        state_dim=10, hidden_dim=hidden_dim, actor_width=actor_width, macro=macro
+        state_dim=OBS_DIM, hidden_dim=hidden_dim, actor_width=actor_width, macro=macro
     ).to(device)
     model.load_state_dict(state)
     model.eval()
@@ -49,7 +49,14 @@ def evaluate(args) -> dict:
         macro=macro,
         hybrid_free_max_deg=args.hybrid_free_max_deg,
         obstacle_signal_mode=args.obstacle_signal_mode,
+        position_age_max_ms=args.max_position_age_ms,
+        position_stale_ms=args.position_stale_ms,
+        position_age_extreme_prob=args.position_age_extreme_prob,
+        recovery_commit_steps=args.recovery_commit_steps,
     )
+    env.fixed_position_age_ms = args.fixed_position_age_ms
+    env.stale_target_assist = args.stale_target_assist
+    env.recovery_signal_window = args.recovery_signal_window
     obs = env.reset(seed=args.seed)
     start_dist = torch.norm(env.target - env.pos, dim=1)
     min_dist = start_dist.clone()
@@ -66,6 +73,11 @@ def evaluate(args) -> dict:
     policy_steps = torch.zeros(args.episodes, device=device)
     jump_actions = torch.zeros(args.episodes, device=device)
     jump_clearances = torch.zeros(args.episodes, device=device)
+    calibration_steps = torch.full((args.episodes,), -1.0, device=device)
+    heading_error_sum = torch.zeros(args.episodes, device=device)
+    heading_error_count = torch.zeros(args.episodes, device=device)
+    position_age_sum = torch.zeros(args.episodes, device=device)
+    stale_steps = torch.zeros(args.episodes, device=device)
     commit_left = torch.zeros(args.episodes, dtype=torch.long, device=device)
     commit_bin = torch.full((args.episodes,), 3, dtype=torch.long, device=device)
     jump_cooldown = torch.zeros(args.episodes, dtype=torch.long, device=device)
@@ -98,6 +110,7 @@ def evaluate(args) -> dict:
             else:
                 actions = [head.argmax(dim=-1) for head in logits]
             action = torch.stack(actions, dim=1)
+            action = env.apply_calibration(action)
             if args.jump_controller == "probe":
                 action[:, 2] = ((obs[:, 9] > 0.5) & (jump_cooldown == 0)).long()
 
@@ -112,6 +125,10 @@ def evaluate(args) -> dict:
         heading_delta = torch.atan2(
             torch.sin(env.heading - old_heading), torch.cos(env.heading - old_heading)
         )
+        estimate_error = torch.atan2(
+            torch.sin(env.estimated_heading - env.heading),
+            torch.cos(env.estimated_heading - env.heading),
+        ).abs()
         turn_deg = heading_delta.abs() * (180.0 / math.pi)
         turn_sign = torch.sign(heading_delta) * (turn_deg > 2.0)
         collided = env.time_since_collision == 0.0
@@ -124,6 +141,14 @@ def evaluate(args) -> dict:
         path_length += torch.where(active, displacement, 0.0)
         jump_actions += (active & (action[:, 2] == 1)).float()
         jump_clearances += (active & env.last_jump_pass_low).float()
+        just_calibrated = active & (calibration_steps < 0) & (
+            env.calibration_samples >= env.CALIBRATION_SAMPLES_REQUIRED
+        )
+        calibration_steps[just_calibrated] = step
+        heading_error_sum += torch.where(active, estimate_error, 0.0)
+        heading_error_count += active.float()
+        position_age_sum += torch.where(active, env.observed_age_ms, 0.0)
+        stale_steps += (active & (env.observed_age_ms > args.max_position_age_ms)).float()
         collision_count += (active & collided).float()
         total_turn_deg += torch.where(active, turn_deg, 0.0)
         reversal = active & (turn_sign != 0) & (previous_turn_sign != 0) & (
@@ -178,6 +203,15 @@ def evaluate(args) -> dict:
         "collisions_mean": float(collision_count.mean().item()),
         "jump_actions_mean": float(jump_actions.mean().item()),
         "jump_clearances_mean": float(jump_clearances.mean().item()),
+        "calibration_steps_median": percentile(calibration_steps[calibration_steps >= 0], 0.5),
+        "heading_error_deg_mean": float(
+            (heading_error_sum.sum() / torch.clamp(heading_error_count.sum(), min=1.0)
+             * (180.0 / math.pi)).item()
+        ),
+        "position_age_ms_mean": float(
+            (position_age_sum.sum() / torch.clamp(policy_steps.sum(), min=1.0)).item()
+        ),
+        "stale_steps_mean": float(stale_steps.mean().item()),
         "min_distance_median": percentile(min_dist, 0.5),
         "steer_entropy_mean": float(
             (steer_entropy_sum.sum() / torch.clamp(policy_steps.sum(), min=1.0)).item()
@@ -194,8 +228,8 @@ def main():
     parser.add_argument("--weights", required=True)
     parser.add_argument(
         "--action-mode",
-        choices=["target_relative", "heading_relative", "hybrid"],
-        required=True,
+        choices=["unknown_heading"],
+        default="unknown_heading",
     )
     parser.add_argument("--episodes", type=int, default=256)
     parser.add_argument("--max-steps", type=int, default=240)
@@ -208,6 +242,13 @@ def main():
     parser.add_argument("--jump-controller", choices=["policy", "probe"], default="probe")
     parser.add_argument("--jump-cooldown", type=int, default=8)
     parser.add_argument("--hybrid-free-max-deg", type=float, default=10.0)
+    parser.add_argument("--max-position-age-ms", type=float, default=500.0)
+    parser.add_argument("--position-stale-ms", type=float, default=1000.0)
+    parser.add_argument("--position-age-extreme-prob", type=float, default=0.8)
+    parser.add_argument("--fixed-position-age-ms", type=float, default=None)
+    parser.add_argument("--recovery-commit-steps", type=int, default=4)
+    parser.add_argument("--stale-target-assist", action="store_true")
+    parser.add_argument("--recovery-signal-window", type=float, default=0.6)
     parser.add_argument(
         "--obstacle-signal-mode",
         choices=["proximity", "jump_probe"],

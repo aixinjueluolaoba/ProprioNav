@@ -65,7 +65,7 @@ Java_com_proprionav_ProprioNav_nativeStep(
     jfloat pos_y,
     jfloat target_x,
     jfloat target_y,
-    jfloat heading
+    jfloat position_age_ms
 ) {
     void* nav = from_handle(handle);
     if (nav == nullptr) {
@@ -73,7 +73,7 @@ Java_com_proprionav_ProprioNav_nativeStep(
         return nullptr;
     }
 
-    float direction = 0.0F;
+    float turn_delta = 0.0F;
     float speed = 0.0F;
     int jump = 0;
     const int status = nav_step(
@@ -82,8 +82,8 @@ Java_com_proprionav_ProprioNav_nativeStep(
         pos_y,
         target_x,
         target_y,
-        heading,
-        &direction,
+        position_age_ms,
+        &turn_delta,
         &speed,
         &jump
     );
@@ -93,7 +93,7 @@ Java_com_proprionav_ProprioNav_nativeStep(
     }
 
     const jfloat values[] = {
-        direction,
+        turn_delta,
         speed,
         static_cast<jfloat>(jump),
     };
