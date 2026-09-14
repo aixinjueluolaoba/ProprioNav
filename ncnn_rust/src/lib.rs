@@ -32,16 +32,19 @@ extern "C" {
     fn ncnn_mat_get_data(mat: ncnn_mat_t) -> *mut f32;
 }
 
-const WORLD_SIZE: f32 = 2250.0;
+// Deployment constants must match the environment the policy was trained in.
+// These are set for the maze/general model (512-cell map, speed scale 30,
+// localisation age up to 800 ms). For another game change these and rebuild.
+const WORLD_SIZE: f32 = 512.0;
 const DT: f32 = 0.3;
 const OBS_DIM: i32 = 13;
 const MAX_TURN: f32 = PI / 4.0;
-const MAX_POSITION_AGE_MS: f32 = 500.0;
+const MAX_POSITION_AGE_MS: f32 = 800.0;
 const MAX_ACCEPTED_AGE_MS: f32 = 2000.0;
-const STALE_POSITION_AGE_MS: f32 = 1000.0;
+const STALE_POSITION_AGE_MS: f32 = 1200.0;
 const MIN_SAMPLE_DT: f32 = 0.05;
 const MAX_SAMPLE_DT: f32 = 1.5;
-const MAX_REASONABLE_SPEED: f32 = 500.0;
+const MAX_REASONABLE_SPEED: f32 = 30.0;
 const JUMP_RETRY_COOLDOWN: i32 = 8;
 const RECOVERY_COMMIT_STEPS: i32 = 4;
 const MACRO_TURNS: [f32; 8] = [
@@ -115,8 +118,8 @@ pub unsafe extern "C" fn free_net(net: *mut c_void) {
 
 /// Low-level V4 inference.
 ///
-/// Inputs: x[13], h_in[96], c_in[96]
-/// Outputs: steer_logits[7], speed_logits[2], h_out[96], c_out[96]
+/// Inputs: x[13], h_in[192], c_in[192]
+/// Outputs: steer_logits[7], speed_logits[2], h_out[192], c_out[192]
 unsafe fn run_inference_impl(
     net: *mut c_void,
     x: *const f32,
@@ -137,8 +140,8 @@ unsafe fn run_inference_impl(
         return -2;
     }
     let mat_x = ncnn_mat_create_external_1d(OBS_DIM, x as *mut c_void, std::ptr::null_mut());
-    let mat_h = ncnn_mat_create_external_1d(96, h_in as *mut c_void, std::ptr::null_mut());
-    let mat_c = ncnn_mat_create_external_1d(96, c_in as *mut c_void, std::ptr::null_mut());
+    let mat_h = ncnn_mat_create_external_1d(192, h_in as *mut c_void, std::ptr::null_mut());
+    let mat_c = ncnn_mat_create_external_1d(192, c_in as *mut c_void, std::ptr::null_mut());
     let in0 = b"in0\0".as_ptr() as *const c_char;
     let in1 = b"in1\0".as_ptr() as *const c_char;
     let in2 = b"in2\0".as_ptr() as *const c_char;
@@ -172,10 +175,10 @@ unsafe fn run_inference_impl(
             std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out1), speed_logits, 2);
         }
         if !h_out.is_null() {
-            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out2), h_out, 96);
+            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out2), h_out, 192);
         }
         if !c_out.is_null() {
-            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out3), c_out, 96);
+            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out3), c_out, 192);
         }
         if !macro_logits.is_null() {
             std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out4), macro_logits, 8);
@@ -232,12 +235,14 @@ pub unsafe extern "C" fn run_inference_macro(
 }
 
 fn freshness_scale(age_ms: f32) -> f32 {
+    // Must mirror GPUUnknownHeadingNavEnv._freshness_scale: 1.0 until 200 ms,
+    // ramp to 0.5 at 500 ms, then ramp to 0 at the stale threshold.
     if age_ms <= 200.0 {
         1.0
-    } else if age_ms <= MAX_POSITION_AGE_MS {
+    } else if age_ms <= 500.0 {
         1.0 - 0.5 * ((age_ms - 200.0) / 300.0)
     } else if age_ms <= STALE_POSITION_AGE_MS {
-        0.5 * ((STALE_POSITION_AGE_MS - age_ms) / 500.0)
+        0.5 * ((STALE_POSITION_AGE_MS - age_ms) / (STALE_POSITION_AGE_MS - 500.0))
     } else {
         0.0
     }
@@ -245,8 +250,8 @@ fn freshness_scale(age_ms: f32) -> f32 {
 
 struct NavState {
     net: ncnn_net_t,
-    h: [f32; 96],
-    c: [f32; 96],
+    h: [f32; 192],
+    c: [f32; 192],
     first_step: bool,
     old_pos: [f32; 2],
     old_age_ms: f32,
@@ -279,8 +284,8 @@ impl NavState {
     fn new(net: ncnn_net_t) -> Self {
         Self {
             net,
-            h: [0.0; 96],
-            c: [0.0; 96],
+            h: [0.0; 192],
+            c: [0.0; 192],
             first_step: true,
             old_pos: [0.0; 2],
             old_age_ms: 0.0,
@@ -578,8 +583,8 @@ unsafe fn nav_step_internal(
     let mut steer_logits = [0.0; 7];
     let mut speed_logits = [0.0; 2];
     let mut macro_logits = [0.0; 8];
-    let mut h_out = [0.0; 96];
-    let mut c_out = [0.0; 96];
+    let mut h_out = [0.0; 192];
+    let mut c_out = [0.0; 192];
     let inference_result = run_inference_macro(
         state.net,
         obs.as_ptr(),

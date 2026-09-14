@@ -60,6 +60,7 @@ CONFIG = {
     # hybrid         : 正常行走时锚定目标、碰撞后切到朝向相对转向，兼顾直线效率和脱困。
     "action_mode": "unknown_heading",
     "position_age_max_ms": 500.0,
+    "position_age_min_ms": 0.0,
     "position_stale_ms": 1000.0,
     "position_age_extreme_prob": 0.8,
     "teacher_coef": 0.25,
@@ -91,6 +92,32 @@ CONFIG = {
     "low_block_penalty_scale": 1.0,
     # 显式脱困宏: 加第 4 个动作头(8 档), 0=正常导航, 1-7=锁定若干步的大角度脱困机动。
     "macro": False,
+    # 迷宫栅格: 设为 map_env/maze_grid.npz 时用图像提取的静态迷宫替代随机障碍世界。
+    "maze_grid": None,
+    # 迷宫目标距离课程进度 (0=仅近目标, 1=全图随机), 由训练循环每轮更新。
+    "curriculum_progress": 1.0,
+    # 迷宫目标距离课程上限 (1=全图; 如 0.3=目标半径限制在近中程)。
+    "maze_curriculum_max": 1.0,
+    # 迷宫是否使用地图引导(测地罗盘)。False=纯坐标通用模式(可跨游戏)。
+    "maze_map_guidance": False,
+    # 纯坐标模式下目标距离上限 = 该比例 × 地图长边 (小段 waypoint)。
+    "maze_target_range": 0.25,
+    # 混合训练: 一半迷宫 + 一半开放世界, 学通用纯坐标策略。
+    "maze_mix_open_world": False,
+    # 让策略自己学减速: 关闭环境强制减速, 加强定位陈旧时选快档的惩罚。
+    "learn_deceleration": False,
+    # 速度教师: 用监督损失教速度头 (新鲜->快档, 陈旚->慢档)。
+    "speed_teacher_coef": 0.0,
+    "speed_teacher_age_ms": 350.0,
+    # 接近目标减速: 远->快档, 近->慢档 (抗延迟冲过头)。
+    "maze_approach_coef": 0.0,
+    "maze_approach_radius": 140.0,
+    "maze_overshoot_coef": 0.0,
+    # 速度档数: 2=[慢,快], 3=[停,慢,快]。
+    "speed_bins": 2,
+    # 环境强制“接近目标限速”: 半径(=0关闭) + 速度上限(占快档比例)。
+    "terminal_slow_radius": 0.0,
+    "terminal_slow_cap_frac": 0.4,
 }
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -358,15 +385,35 @@ class GPUVectorizedBlindNavEnv:
 
         V4 overrides this hook to apply a freshness limit when localization is
         old. Keeping it here lets the existing collision solver stay shared.
+        Supports 2 bins [50,100] or 3 bins [0,50,100] (bin 0 = emergency stop).
         """
+        if getattr(self, "speed_bins", 2) >= 3:
+            return torch.where(
+                speed_bin == 0, 0.0, torch.where(speed_bin == 1, 50.0, 100.0)
+            )
         return torch.where(speed_bin == 1, 100.0, 50.0)
+
+    def _terminal_speed_limit(self, speed):
+        """Environment-enforced terminal slowdown: cap physical speed near the goal.
+
+        ``terminal_slow_radius`` = 0 disables it. This is a hard engine-side clamp
+        (no learning) that prevents overshooting the target under latency.
+        """
+        radius = getattr(self, "terminal_slow_radius", 0.0)
+        if radius <= 0.0:
+            return speed
+        dist = torch.norm(self.target - self.pos, dim=1)
+        bins = getattr(self, "speed_bins", 2)
+        fast = self._speed_for_action(torch.full_like(speed, bins - 1))
+        cap = getattr(self, "terminal_slow_cap_frac", 0.4) * fast
+        return torch.where(dist < radius, torch.minimum(speed, cap), speed)
 
     def step(self, actions):
         self.step_count += 1
         self.time_since_collision += 0.3
 
         angle_bin = actions[:, 0].clamp(0, 6)
-        speed_bin = actions[:, 1].clamp(0, 1)
+        speed_bin = actions[:, 1].clamp(0, getattr(self, "speed_bins", 2) - 1)
         jump_bin = actions[:, 2].clamp(0, 1)
         start_macro = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
@@ -400,7 +447,7 @@ class GPUVectorizedBlindNavEnv:
             desired_angle = torch.where(in_macro, self.macro_heading, desired_angle)
             self.macro_left = torch.clamp(self.macro_left - in_macro.int(), min=0)
 
-        speed = self._speed_for_action(speed_bin)
+        speed = self._terminal_speed_limit(self._speed_for_action(speed_bin))
         jump_active = (jump_bin == 1)
 
         max_turn = math.radians(45.0)  # 每步允许高达 45° 的极速切弯避障
@@ -671,8 +718,26 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
         )
         self._v4_initializing = False
         self.position_age_max_ms = float(position_age_max_ms)
+        self.position_age_min_ms = 0.0
         self.position_stale_ms = float(position_stale_ms)
         self.fixed_position_age_ms = None
+        # Scale-invariant velocity feature: normalise by the env's own max speed
+        # so the same policy transfers across maps/units.
+        self.obs_speed_scale = 100.0
+        # Occasional long-latency spikes teach robustness to worse-than-usual delay.
+        self.position_age_spike_prob = 0.0
+        self.position_age_spike_ms = float(position_age_max_ms)
+        # When False, the env no longer caps speed by position freshness; the
+        # policy itself must choose to slow down (learned deceleration).
+        self.apply_freshness_speed = True
+        # Penalty for picking the fast bin while localisation is stale.
+        self.decel_penalty = 0.0
+        self.decel_age_ms = 350.0
+        # Symmetric reward: fast bin when fresh, slow bin when stale.
+        self.decel_match_coef = 0.0
+        # Outcome-driven overshoot penalty near the target.
+        self.overshoot_coef = 0.0
+        self.overshoot_radius = 140.0
         self.stale_target_assist = False
         self.recovery_signal_window = 0.6
         self.turn_offsets = torch.tensor(
@@ -756,15 +821,25 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
             active = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
 
         if self.fixed_position_age_ms is None:
-            sampled_age = torch.rand(self.num_envs, device=self.device) * self.position_age_max_ms
+            age_min = float(getattr(self, "position_age_min_ms", 0.0))
+            age_span = max(0.0, self.position_age_max_ms - age_min)
+            sampled_age = torch.rand(self.num_envs, device=self.device) * age_span + age_min
             extreme_roll = torch.rand(self.num_envs, device=self.device)
             extreme_bucket = torch.floor(extreme_roll * 3.0).long().clamp(max=2)
-            extreme_age = extreme_bucket.float() * (self.position_age_max_ms / 2.0)
+            extreme_age = extreme_bucket.float() * (age_span / 2.0) + age_min
             sampled_age = torch.where(
                 extreme_roll < self.position_age_extreme_prob,
                 extreme_age,
                 sampled_age,
             )
+            spike_prob = float(getattr(self, "position_age_spike_prob", 0.0))
+            if spike_prob > 0.0:
+                spike_ms = float(getattr(self, "position_age_spike_ms", self.position_age_max_ms))
+                spike_roll = torch.rand(self.num_envs, device=self.device) < spike_prob
+                spike_age = torch.rand(self.num_envs, device=self.device) * (
+                    max(spike_ms, self.position_age_max_ms) - age_min
+                ) + age_min
+                sampled_age = torch.where(spike_roll, spike_age, sampled_age)
         else:
             sampled_age = torch.full(
                 (self.num_envs,),
@@ -887,6 +962,8 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
         speed = super()._speed_for_action(speed_bin)
         if getattr(self, "_v4_initializing", False):
             return speed
+        if not getattr(self, "apply_freshness_speed", True):
+            return speed
         return speed * self._freshness_scale()
 
     def apply_calibration(self, actions):
@@ -950,12 +1027,39 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
 
     def step(self, actions):
         old_pos = self.pos.clone()
+        prev_dist = self.prev_dist.clone()
         angle_bin = actions[:, 0].clamp(0, 6)
         self.last_turn_delta = self.turn_offsets[angle_bin]
         self.turn_history[:, 1] = self.turn_history[:, 0]
         self.turn_history[:, 0] = self.last_turn_delta
         result = GPUVectorizedBlindNavEnv.step(self, actions)
         _, reward, dones, reached = result
+        if getattr(self, "overshoot_coef", 0.0) > 0.0:
+            curr_dist = torch.norm(self.target - self.pos, dim=1)
+            progress = prev_dist - curr_dist
+            near = curr_dist < getattr(self, "overshoot_radius", 140.0)
+            penalty = self.overshoot_coef * torch.clamp(-progress, 0.0, 12.0)
+            reward = reward - torch.where(
+                near & (progress < 0.0), penalty, torch.zeros_like(reward)
+            )
+            result = (result[0], reward, dones, reached)
+        if getattr(self, "decel_penalty", 0.0) > 0.0:
+            stale = self.observed_age_ms > getattr(self, "decel_age_ms", 350.0)
+            reward = reward - torch.where(
+                stale & (actions[:, 1] == 1),
+                torch.full_like(reward, self.decel_penalty),
+                torch.zeros_like(reward),
+            )
+            result = (result[0], reward, dones, reached)
+        if getattr(self, "decel_match_coef", 0.0) > 0.0:
+            age_norm = torch.clamp(
+                self.observed_age_ms / self.position_age_max_ms, 0.0, 1.0
+            )
+            fast = (actions[:, 1] == 1).float()
+            reward = reward + self.decel_match_coef * (
+                fast * (1.0 - age_norm) + (1.0 - fast) * age_norm
+            )
+            result = (result[0], reward, dones, reached)
 
         active = ~dones
         if active.any():
@@ -989,8 +1093,8 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
             torch.clamp(delta[:, 1] / self.world_size, -1.0, 1.0),
             torch.sin(angle_error),
             torch.cos(angle_error),
-            torch.clamp(self.velocity[:, 0] / self.MAX_REASONABLE_SPEED, -1.0, 1.0),
-            torch.clamp(self.velocity[:, 1] / self.MAX_REASONABLE_SPEED, -1.0, 1.0),
+            torch.clamp(self.velocity[:, 0] / self.obs_speed_scale, -1.0, 1.0),
+            torch.clamp(self.velocity[:, 1] / self.obs_speed_scale, -1.0, 1.0),
             torch.clamp(distance / self.world_size, 0.0, 1.0),
             torch.clamp(self.stuck_time / 3.0, 0.0, 1.0),
             collision_touch,
@@ -1004,21 +1108,41 @@ class GPUUnknownHeadingNavEnv(GPUVectorizedBlindNavEnv):
 
 GPUBlindNavEnvV11b = GPUUnknownHeadingNavEnv
 
+
+def create_env(maze_grid=None, **kwargs):
+    """Build the standard random-obstacle env or the image-derived maze env.
+
+    Set ``CONFIG['maze_grid']`` (or pass ``maze_grid=`` explicitly, needed for
+    spawned eval workers) to a ``maze_grid.npz`` path produced by
+    ``map_env/build_maze_grid.py`` to train on the extracted maze layout.
+    """
+    grid = maze_grid if maze_grid is not None else CONFIG.get("maze_grid")
+    if grid:
+        from map_env.maze_env import GPUImageMazeNavEnv
+
+        kwargs.setdefault("map_guidance", CONFIG.get("maze_map_guidance", False))
+        kwargs.setdefault("target_range_frac", CONFIG.get("maze_target_range", 0.25))
+        return GPUImageMazeNavEnv(grid_path=grid, **kwargs)
+    kwargs.pop("map_guidance", None)
+    kwargs.pop("target_range_frac", None)
+    return GPUBlindNavEnvV11b(**kwargs)
+
 # =====================================================================
 # 2. PPO Recurrent (LSTM) 网络架构
 # =====================================================================
 class RecurrentActorCritic(nn.Module):
-    def __init__(self, state_dim=OBS_DIM, hidden_dim=96, actor_width=48, macro=False):
+    def __init__(self, state_dim=OBS_DIM, hidden_dim=96, actor_width=48, macro=False, speed_bins=2):
         super().__init__()
         self.lstm = nn.LSTM(state_dim, hidden_dim, num_layers=1)
         self.macro = macro
+        self.speed_bins = int(speed_bins)
 
         self.actor_fc = nn.Sequential(
             nn.Linear(hidden_dim, actor_width),
             nn.Tanh()
         )
         self.steer_head = nn.Linear(actor_width, 7)  # 相对运动方向: -45/-25/-10/0/+10/+25/+45
-        self.speed_head = nn.Linear(actor_width, 2)  # 2档基础速度 (50/100)，再由新鲜度限速
+        self.speed_head = nn.Linear(actor_width, int(speed_bins))  # 速度档: 2=[50,100]; 3=[停/慢/快]
         self.jump_head = nn.Linear(actor_width, 2)   # 2档跳跃 (0/1)
         # 8档脱困宏 (0=正常导航, 1-7=锁定若干步的大角度恢复机动)
         self.macro_head = nn.Linear(actor_width, 8) if macro else None
@@ -1095,7 +1219,12 @@ class RecurrentActorCritic(nn.Module):
         macro_logits_out = None
         if self.macro_head is not None:
             macro_logits_out = macro_logits.view(seq_len, num_envs, 8)
-        return log_prob, entropy, values, logits_steer.view(seq_len, num_envs, 7), macro_logits_out
+        return (
+            log_prob, entropy, values,
+            logits_steer.view(seq_len, num_envs, 7),
+            macro_logits_out,
+            logits_speed.view(seq_len, num_envs, 2),
+        )
 
     def steer_logits_for_sequence(self, x, lstm_state, dones):
         """Return steering logits for the auxiliary angle-to-turn loss."""
@@ -1166,7 +1295,7 @@ def evaluate_training_checkpoint(agent, device, episodes=64, max_steps=240, seed
     agent.eval()
     results = []
     for age_ms in (0.0, 250.0, 500.0):
-        env = GPUBlindNavEnvV11b(
+        env = create_env(
             num_envs=episodes,
             device=device,
             auto_reset=False,
@@ -1179,6 +1308,8 @@ def evaluate_training_checkpoint(agent, device, episodes=64, max_steps=240, seed
             position_age_extreme_prob=0.8,
             obstacle_density=1.0,
         )
+        if hasattr(env, "set_curriculum_progress"):
+            env.set_curriculum_progress(CONFIG.get("curriculum_progress", 1.0))
         env.fixed_position_age_ms = age_ms
         obs = env.reset(seed=seed + int(age_ms))
         h = torch.zeros(1, episodes, agent.lstm.hidden_size, device=device)
@@ -1279,19 +1410,37 @@ class RenderShim:
         return float(self.gpu_env.heading[0].item())
 
     @property
+    def is_maze(self):
+        return hasattr(self.gpu_env, "grid_free")
+
+    @property
+    def maze_free(self):
+        if not self.is_maze:
+            return None
+        return self.gpu_env.grid_free.cpu().numpy()
+
+    @property
     def tree_centers(self):
+        if self.is_maze:
+            return np.zeros((0, 2), dtype=np.float32)
         return self.gpu_env.tree_centers[0].cpu().numpy()
 
     @property
     def mountain_centers(self):
+        if self.is_maze:
+            return np.zeros((0, 2), dtype=np.float32)
         return self.gpu_env.mountain_centers[0].cpu().numpy()
 
     @property
     def mountain_vertices(self):
+        if self.is_maze:
+            return np.zeros((0, 8, 2), dtype=np.float32)
         return self.gpu_env.mountain_vertices[0].cpu().numpy()
 
     @property
     def low_centers(self):
+        if self.is_maze:
+            return np.zeros((0, 2), dtype=np.float32)
         return self.gpu_env.low_centers[0].cpu().numpy()
 
     @property
@@ -1322,7 +1471,7 @@ def render_training_episode(
     output_video = output_dir / "最新迭代.mp4"
     temporary_video = output_dir / "最新迭代.写入中.mp4"
 
-    env = GPUBlindNavEnvV11b(
+    env = create_env(
         num_envs=1,
         device="cpu",
         auto_reset=False,
@@ -1412,7 +1561,11 @@ def render_training_episode(
 def run_and_render_seed_worker(seed, index, weights_path, fps, out_dir, hidden_dim=96, actor_width=48,
                                action_mode="unknown_heading", macro=False, collision_mode="hard",
                                sample=False, commit=0, hybrid_free_max_deg=10.0,
-                               obstacle_signal_mode="jump_probe"):
+                               obstacle_signal_mode="jump_probe", maze_grid=None,
+                               maze_curriculum=1.0, maze_map_guidance=False,
+                               maze_target_range=0.25, position_age_min_ms=0.0,
+                               learn_deceleration=False,
+                               terminal_slow_radius=0.0, terminal_slow_cap_frac=0.4):
     try:
         from render_eval10_concat import render_episode_video
 
@@ -1424,14 +1577,24 @@ def run_and_render_seed_worker(seed, index, weights_path, fps, out_dir, hidden_d
         h = torch.zeros(1, 1, hidden_dim, dtype=torch.float32)
         c = torch.zeros(1, 1, hidden_dim, dtype=torch.float32)
 
-        env = GPUBlindNavEnvV11b(num_envs=1, device="cpu", auto_reset=False,
+        env = create_env(maze_grid=maze_grid, num_envs=1, device="cpu", auto_reset=False,
                                  collision_mode=collision_mode, action_mode=action_mode, macro=macro,
                                  hybrid_free_max_deg=hybrid_free_max_deg,
                                  obstacle_signal_mode=obstacle_signal_mode,
+                                 map_guidance=maze_map_guidance,
+                                 target_range_frac=maze_target_range,
                                  position_age_max_ms=CONFIG["position_age_max_ms"],
                                  position_stale_ms=CONFIG["position_stale_ms"],
                                  position_age_extreme_prob=CONFIG["position_age_extreme_prob"],
                                  recovery_commit_steps=CONFIG["recovery_commit_steps"])
+        env.position_age_min_ms = position_age_min_ms
+        if learn_deceleration:
+            env.apply_freshness_speed = False
+        if terminal_slow_radius > 0.0:
+            env.terminal_slow_radius = terminal_slow_radius
+            env.terminal_slow_cap_frac = terminal_slow_cap_frac
+        if hasattr(env, "set_curriculum_progress"):
+            env.set_curriculum_progress(maze_curriculum)
         env.reset(seed=seed)
         obs = env._get_obs()
         shim = RenderShim(env)
@@ -1501,22 +1664,56 @@ def train(out_dir, weights_path):
     num_steps = CONFIG["rollout_steps"]
     total_episodes = CONFIG["total_episodes"]
 
-    env = GPUBlindNavEnvV11b(num_envs=num_envs, device=DEVICE, collision_mode=CONFIG["collision_mode"],
-                             action_mode=CONFIG["action_mode"], macro=CONFIG["macro"],
-                             angle_penalty_coef=CONFIG["angle_penalty_coef"],
-                             step_cost=CONFIG["step_cost"],
-                             free_turn_penalty=CONFIG["free_turn_penalty"],
-                             far_slow_penalty=CONFIG["far_slow_penalty"],
-                             hybrid_free_max_deg=CONFIG["hybrid_free_max_deg"],
-                             obstacle_signal_mode=CONFIG["obstacle_signal_mode"],
-                             false_jump_penalty=CONFIG["false_jump_penalty"],
-                             position_age_max_ms=CONFIG["position_age_max_ms"],
-                             position_stale_ms=CONFIG["position_stale_ms"],
-                             obstacle_density=CONFIG["obstacle_density_start"],
-                             position_age_extreme_prob=CONFIG["position_age_extreme_prob"],
-                             recovery_commit_steps=CONFIG["recovery_commit_steps"],
-                             recovery_reward_scale=CONFIG["recovery_reward_scale"])
-    env.fixed_position_age_ms = CONFIG["fixed_training_age_ms"]
+    env_kwargs = dict(
+        num_envs=num_envs, device=DEVICE, collision_mode=CONFIG["collision_mode"],
+        action_mode=CONFIG["action_mode"], macro=CONFIG["macro"],
+        angle_penalty_coef=CONFIG["angle_penalty_coef"],
+        step_cost=CONFIG["step_cost"],
+        free_turn_penalty=CONFIG["free_turn_penalty"],
+        far_slow_penalty=CONFIG["far_slow_penalty"],
+        hybrid_free_max_deg=CONFIG["hybrid_free_max_deg"],
+        obstacle_signal_mode=CONFIG["obstacle_signal_mode"],
+        false_jump_penalty=CONFIG["false_jump_penalty"],
+        position_age_max_ms=CONFIG["position_age_max_ms"],
+        position_stale_ms=CONFIG["position_stale_ms"],
+        obstacle_density=CONFIG["obstacle_density_start"],
+        position_age_extreme_prob=CONFIG["position_age_extreme_prob"],
+        recovery_commit_steps=CONFIG["recovery_commit_steps"],
+        recovery_reward_scale=CONFIG["recovery_reward_scale"],
+    )
+    if CONFIG.get("maze_mix_open_world") and CONFIG.get("maze_grid"):
+        from map_env.mixed_env import MixedNavEnv
+
+        env = MixedNavEnv(grid_path=CONFIG["maze_grid"], **env_kwargs)
+        print("[训练模式] 混合场景: 迷宫 + 开放世界 (同一纯坐标策略)", flush=True)
+    else:
+        env = create_env(**env_kwargs)
+    if CONFIG["fixed_training_age_ms"] is not None:
+        env.fixed_position_age_ms = CONFIG["fixed_training_age_ms"]
+    else:
+        env.position_age_min_ms = CONFIG["position_age_min_ms"]
+    if CONFIG.get("learn_deceleration"):
+        env.apply_freshness_speed = False
+        env.decel_penalty = 0.0
+        env.decel_match_coef = 0.0
+        env.decel_age_ms = 350.0
+        env.maze_decel_penalty = 0.0
+        env.maze_speed_match_coef = 0.0
+        print("[训练模式] 关闭环境强制降速, 速度由策略自己学", flush=True)
+    if CONFIG.get("maze_approach_coef", 0.0) > 0.0:
+        env.maze_approach_coef = CONFIG["maze_approach_coef"]
+        env.maze_approach_radius = CONFIG.get("maze_approach_radius", 140.0)
+        print(f"[训练模式] 接近目标减速奖励={CONFIG['maze_approach_coef']} 半径={CONFIG.get('maze_approach_radius',140.0)}", flush=True)
+    if CONFIG.get("terminal_slow_radius", 0.0) > 0.0:
+        env.terminal_slow_radius = CONFIG["terminal_slow_radius"]
+        env.terminal_slow_cap_frac = CONFIG.get("terminal_slow_cap_frac", 0.4)
+        print(f"[训练模式] 环境接近限速: 半径={CONFIG['terminal_slow_radius']} 上限比例={CONFIG.get('terminal_slow_cap_frac',0.4)}", flush=True)
+    if CONFIG.get("maze_overshoot_coef", 0.0) > 0.0:
+        env.maze_overshoot_coef = CONFIG["maze_overshoot_coef"]
+        env.maze_approach_radius = CONFIG.get("maze_approach_radius", 140.0)
+        env.overshoot_coef = CONFIG["maze_overshoot_coef"]
+        env.overshoot_radius = CONFIG.get("maze_approach_radius", 140.0)
+        print(f"[训练模式] 过冲惩罚={CONFIG['maze_overshoot_coef']} 半径={CONFIG.get('maze_approach_radius',140.0)}", flush=True)
     env.stale_target_assist = CONFIG["stale_target_assist"]
     env.collision_penalty_scale = CONFIG["collision_penalty_scale"]
     env.low_block_penalty_scale = CONFIG["low_block_penalty_scale"]
@@ -1580,6 +1777,7 @@ def train(out_dir, weights_path):
     actions_batch = torch.zeros((num_steps, num_envs, 4 if CONFIG["macro"] else 3), dtype=torch.long, device=DEVICE)
     teacher_steer_batch = torch.zeros((num_steps, num_envs), dtype=torch.long, device=DEVICE)
     teacher_mask_batch = torch.zeros((num_steps, num_envs), dtype=torch.bool, device=DEVICE)
+    speed_teacher_batch = torch.zeros((num_steps, num_envs), dtype=torch.long, device=DEVICE)
     macro_teacher_batch = torch.zeros((num_steps, num_envs), dtype=torch.long, device=DEVICE)
     macro_teacher_mask_batch = torch.zeros((num_steps, num_envs), dtype=torch.bool, device=DEVICE)
     logprobs_batch = torch.zeros((num_steps, num_envs), device=DEVICE)
@@ -1611,6 +1809,10 @@ def train(out_dir, weights_path):
             * curriculum_fraction
         )
         env.set_obstacle_density(obstacle_density)
+        if hasattr(env, "set_curriculum_progress"):
+            capped = min(curriculum_fraction, CONFIG.get("maze_curriculum_max", 1.0))
+            env.set_curriculum_progress(capped)
+            CONFIG["curriculum_progress"] = capped
         teacher_coef = CONFIG["teacher_coef"] * max(
             0.0,
             1.0 - total_steps_collected / max(CONFIG["teacher_decay_steps"], 1),
@@ -1639,6 +1841,13 @@ def train(out_dir, weights_path):
                 & (next_obs[:, 8] < 0.5)
                 & (next_done < 0.5)
             )
+            # Speed teacher: fast (bin 1) when localisation is fresh, slow
+            # (bin 0) when it is stale. Directly supervises the speed head.
+            if CONFIG.get("speed_teacher_coef", 0.0) > 0.0:
+                age_ms = next_obs[:, 10] * CONFIG["position_age_max_ms"]
+                speed_teacher_batch[step] = (
+                    age_ms < CONFIG.get("speed_teacher_age_ms", 350.0)
+                ).long()
 
             reset_mask = (next_done > 0.5).view(1, -1, 1)
             next_lstm_state_h = torch.where(reset_mask, torch.zeros_like(next_lstm_state_h), next_lstm_state_h)
@@ -1749,6 +1958,7 @@ def train(out_dir, weights_path):
                 mb_dones = dones_batch[:, mb_env_inds]
                 mb_teacher_steer = teacher_steer_batch[:, mb_env_inds]
                 mb_teacher_mask = teacher_mask_batch[:, mb_env_inds]
+                mb_speed_teacher = speed_teacher_batch[:, mb_env_inds]
                 mb_macro_teacher = macro_teacher_batch[:, mb_env_inds]
                 mb_macro_teacher_mask = macro_teacher_mask_batch[:, mb_env_inds]
 
@@ -1757,8 +1967,8 @@ def train(out_dir, weights_path):
                 init_h = lstm_start_h[:, mb_env_inds].detach()
                 init_c = lstm_start_c[:, mb_env_inds].detach()
 
-                newlogprob, entropy, newvalue, teacher_logits, macro_logits = agent.evaluate_actions(
-                    mb_obs, (init_h, init_c), mb_dones, mb_actions
+                newlogprob, entropy, newvalue, teacher_logits, macro_logits, speed_logits = (
+                    agent.evaluate_actions(mb_obs, (init_h, init_c), mb_dones, mb_actions)
                 )
 
                 logratio = newlogprob - mb_logprobs
@@ -1789,12 +1999,20 @@ def train(out_dir, weights_path):
                 else:
                     macro_teacher_loss = torch.zeros((), device=DEVICE)
 
+                if CONFIG.get("speed_teacher_coef", 0.0) > 0.0:
+                    speed_teacher_loss = F.cross_entropy(
+                        speed_logits.reshape(-1, 2), mb_speed_teacher.reshape(-1)
+                    )
+                else:
+                    speed_teacher_loss = torch.zeros((), device=DEVICE)
+
                 loss = (
                     pg_loss
                     - CONFIG["ent_coef"] * entropy_loss
                     + CONFIG["vf_coef"] * v_loss
                     + teacher_coef * teacher_loss
                     + CONFIG["macro_teacher_loss_coef"] * macro_teacher_loss
+                    + CONFIG["speed_teacher_coef"] * speed_teacher_loss
                 )
 
                 optimizer.zero_grad()
@@ -1868,7 +2086,15 @@ def evaluate(out_dir, weights_path, play=True):
             CONFIG["eval_sample"],
             CONFIG["eval_commit"],
             CONFIG["hybrid_free_max_deg"],
-            CONFIG["obstacle_signal_mode"]
+            CONFIG["obstacle_signal_mode"],
+            CONFIG.get("maze_grid"),
+            CONFIG.get("maze_curriculum_max", 1.0),
+            CONFIG.get("maze_map_guidance", False),
+            CONFIG.get("maze_target_range", 0.25),
+            CONFIG.get("position_age_min_ms", 0.0),
+            CONFIG.get("learn_deceleration", False),
+            CONFIG.get("terminal_slow_radius", 0.0),
+            CONFIG.get("terminal_slow_cap_frac", 0.4),
         ))
 
     eval_start_time = time.time()
@@ -1957,8 +2183,33 @@ if __name__ == "__main__":
                         choices=["proximity", "jump_probe"])
     parser.add_argument("--false-jump-penalty", type=float, default=None)
     parser.add_argument("--position-age-max-ms", type=float, default=None)
+    parser.add_argument("--position-age-min-ms", type=float, default=None)
     parser.add_argument("--position-stale-ms", type=float, default=None)
     parser.add_argument("--position-age-extreme-prob", type=float, default=None)
+    parser.add_argument("--maze-map-guidance", action="store_true",
+                        help="迷宫启用地图测地罗盘引导(默认关闭=纯坐标通用模式)")
+    parser.add_argument("--maze-target-range", type=float, default=None,
+                        help="纯坐标模式目标距离上限(地图长边比例, 默认0.25)")
+    parser.add_argument("--maze-mix-open-world", action="store_true",
+                        help="混合训练: 一半迷宫 + 一半开放世界 (通用纯坐标策略)")
+    parser.add_argument("--learn-deceleration", action="store_true",
+                        help="关闭环境强制减速, 让策略自己学定位陈旧时减速")
+    parser.add_argument("--speed-teacher-coef", type=float, default=None,
+                        help="速度教师监督损失权重 (>0 启用)")
+    parser.add_argument("--speed-teacher-age-ms", type=float, default=None,
+                        help="速度教师阈值: 年龄大于它教慢档")
+    parser.add_argument("--maze-approach-coef", type=float, default=None,
+                        help="接近目标减速奖励权重 (>0 启用: 远快近慢)")
+    parser.add_argument("--maze-approach-radius", type=float, default=None,
+                        help="接近目标减速的距离阈值")
+    parser.add_argument("--maze-overshoot-coef", type=float, default=None,
+                        help="接近段冲过头(距离变大)惩罚权重 (>0 启用)")
+    parser.add_argument("--speed-bins", type=int, default=None,
+                        choices=[2, 3], help="速度档数: 2=[慢,快], 3=[停,慢,快]")
+    parser.add_argument("--terminal-slow-radius", type=float, default=None,
+                        help="环境强制接近目标限速半径 (>0 启用, 0 关闭)")
+    parser.add_argument("--terminal-slow-cap-frac", type=float, default=None,
+                        help="限速上限占快档速度比例 (默认0.4)")
     parser.add_argument("--validation-every-updates", type=int, default=None)
     parser.add_argument("--validation-episodes", type=int, default=None)
     parser.add_argument("--validation-max-steps", type=int, default=None)
@@ -1984,6 +2235,10 @@ if __name__ == "__main__":
     parser.add_argument("--reset-jump-head", action="store_true")
     parser.add_argument("--train-jump-only", action="store_true")
     parser.add_argument("--macro", action="store_true", help="启用 8 档显式脱困宏动作头")
+    parser.add_argument("--maze-grid", type=str, default=None,
+                        help="用 map_env/build_maze_grid.py 生成的迷宫栅格 .npz 替代随机障碍世界")
+    parser.add_argument("--maze-curriculum-max", type=float, default=None,
+                        help="迷宫目标距离课程上限 (0~1, 1=全图, 如 0.3=近中程随机目标)")
     args = parser.parse_args()
     if args.episodes is not None:
         CONFIG["total_episodes"] = args.episodes
@@ -2029,6 +2284,32 @@ if __name__ == "__main__":
         CONFIG["false_jump_penalty"] = args.false_jump_penalty
     if args.position_age_max_ms is not None:
         CONFIG["position_age_max_ms"] = args.position_age_max_ms
+    if args.position_age_min_ms is not None:
+        CONFIG["position_age_min_ms"] = args.position_age_min_ms
+    if args.maze_map_guidance:
+        CONFIG["maze_map_guidance"] = True
+    if args.maze_target_range is not None:
+        CONFIG["maze_target_range"] = args.maze_target_range
+    if args.maze_mix_open_world:
+        CONFIG["maze_mix_open_world"] = True
+    if args.learn_deceleration:
+        CONFIG["learn_deceleration"] = True
+    if args.speed_teacher_coef is not None:
+        CONFIG["speed_teacher_coef"] = args.speed_teacher_coef
+    if args.speed_teacher_age_ms is not None:
+        CONFIG["speed_teacher_age_ms"] = args.speed_teacher_age_ms
+    if args.maze_approach_coef is not None:
+        CONFIG["maze_approach_coef"] = args.maze_approach_coef
+    if args.maze_approach_radius is not None:
+        CONFIG["maze_approach_radius"] = args.maze_approach_radius
+    if args.maze_overshoot_coef is not None:
+        CONFIG["maze_overshoot_coef"] = args.maze_overshoot_coef
+    if args.speed_bins is not None:
+        CONFIG["speed_bins"] = args.speed_bins
+    if args.terminal_slow_radius is not None:
+        CONFIG["terminal_slow_radius"] = args.terminal_slow_radius
+    if args.terminal_slow_cap_frac is not None:
+        CONFIG["terminal_slow_cap_frac"] = args.terminal_slow_cap_frac
     if args.position_stale_ms is not None:
         CONFIG["position_stale_ms"] = args.position_stale_ms
     if args.position_age_extreme_prob is not None:
@@ -2085,5 +2366,9 @@ if __name__ == "__main__":
         CONFIG["action_mode"] = args.action_mode
     if args.macro:
         CONFIG["macro"] = True
+    if args.maze_grid is not None:
+        CONFIG["maze_grid"] = args.maze_grid
+    if args.maze_curriculum_max is not None:
+        CONFIG["maze_curriculum_max"] = max(0.0, min(1.0, args.maze_curriculum_max))
     multiprocessing.set_start_method('spawn', force=True)
     run_pipeline(train_only=args.train_only, eval_only=args.eval_only, play=not args.no_play)

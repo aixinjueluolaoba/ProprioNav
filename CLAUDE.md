@@ -28,6 +28,22 @@ deployment library.
 - `pipeline_out/test_inference.py`: low-level parity test.
 - `pipeline_out/test_nav_api.py`: high-level parity test.
 
+## Maze / general policy (map_env)
+
+- `map_env/README.md`: full documentation (env, training, results, deployment).
+- `map_env/generate_maze.py`: procedural maze -> `map_env/maze_grid.npz`.
+- `map_env/maze_env.py`: `GPUImageMazeNavEnv` (grid collision, random goals, curriculum).
+- `map_env/mixed_env.py`: `MixedNavEnv` (half maze + half open world, one coordinate-only policy).
+- `pipeline_out/export_mixed_ncnn.py`: exports the hidden-192 general policy to NCNN.
+- Flags: `--maze-grid`, `--maze-mix-open-world`, `--maze-target-range`,
+  `--maze-curriculum-max`, `--maze-map-guidance`, `--learn-deceleration`,
+  `--maze-overshoot-coef`, `--terminal-slow-radius`, `--position-age-min-ms`.
+- Weights: `policy_weights_mixed.pth` (general), `policy_weights_overshoot.pth`
+  (maze, learned approach slowdown). NCNN: `policy_mixed.ncnn.param/bin`.
+- Coordinate-only ABI input stays pos/target/position_age_ms; the C/Rust lib
+  constants (`WORLD_SIZE`, age limits, `MAX_REASONABLE_SPEED`) must match the
+  trained game scale (see `ncnn_rust/src/lib.rs`).
+
 ## Commands
 
 ```bash

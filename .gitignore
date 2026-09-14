@@ -39,3 +39,21 @@ android/.gradle/
 android/local.properties
 android/**/build/
 android/**/.cxx/
+
+# 迷宫/通用模型与 NCNN 产物 (有意保留的部署资产)
+!pipeline_out/policy_weights_mixed.pth
+!pipeline_out/policy_weights_overshoot.pth
+pipeline_out/*.pnnx.*
+pipeline_out/policy_mixed.pt
+
+# 迷宫环境: 提交生成的栅格, 忽略预览/视频/描图版/缓存
+map_env/*.png
+map_env/*.mp4
+map_env/maze_grid_traced.npz
+map_env/__pycache__/
+
+# 训练日志
+Logs/
+pipeline_out/policy_mixed_ncnn.py
+pipeline_out/policy_mixed_pnnx.py
+pipeline_out/maze_smoke.pth

@@ -12,6 +12,10 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 def obstacle_bounds(env) -> tuple[float, float, float, float]:
     xs: list[float] = []
     ys: list[float] = []
+    maze_free = getattr(env, "maze_free", None)
+    if maze_free is not None:
+        h, w = maze_free.shape
+        return -w / 2.0, w / 2.0, -h / 2.0, h / 2.0
     if hasattr(env, "tree_centers"):
         t_centers = env.tree_centers
         xs.extend((t_centers[:, 0] - 28.0).tolist() + (t_centers[:, 0] + 28.0).tolist())
@@ -122,6 +126,20 @@ def render_episode_video(
     ax.tick_params(labelsize=8, colors="#64748b")
     for spine in ax.spines.values():
         spine.set_color("#cbd5e1")
+
+    maze_free = getattr(env, "maze_free", None)
+    if maze_free is not None:
+        h, w = maze_free.shape
+        bg = np.empty((h, w, 3), dtype=np.float32)
+        bg[maze_free > 0] = (0.90, 0.89, 0.85)
+        bg[maze_free == 0] = (0.20, 0.19, 0.22)
+        ax.imshow(
+            bg,
+            extent=[-w / 2.0, w / 2.0, -h / 2.0, h / 2.0],
+            origin="upper",
+            zorder=0,
+            interpolation="nearest",
+        )
 
     view_span = min(max_x - min_x, max_y - min_y)
     marker_size = max(10.0, min(24.0, 17000.0 / max(view_span, 1.0)))
