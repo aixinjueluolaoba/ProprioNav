@@ -37,8 +37,8 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
 
     companion object {
         private const val ASSET_DIR = "proprionav"
-        private const val PARAM = "policy_v4.param"
-        private const val BIN = "policy_v4.bin"
+        private const val PARAM = "policy_mixed.param"
+        private const val BIN = "policy_mixed.bin"
 
         init {
             System.loadLibrary("ncnn_rust")
