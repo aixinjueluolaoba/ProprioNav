@@ -50,15 +50,15 @@ int nav_step(
     float* abs_angle     /* 库维护的绝对摇杆角（弧度, y 向上, 0=+x/右），可为 NULL */
 );
 
-/* V5 反馈版：调用方回传权威碰撞；macro 输出当前脱困宏 id（模型需有宏头）。 */
+/* 宏输出变体：输入与 nav_step 完全相同，多返回当前脱困宏 id。
+ * 碰撞一律由库内部推断（相对自身步幅），没有调用方传入的碰撞标志。 */
 int nav_step_feedback(
     void* nav,
     float pos_x, float pos_y,
     float target_x, float target_y,
     float position_age_ms,
-    int collided,
     float* turn_delta, float* speed, int* jump,
-    int* macro,          /* 可为 NULL：退回库内置脱困 */
+    int* macro,          /* 可为 NULL / 无宏头的模型传 NULL */
     float* abs_angle
 );
 

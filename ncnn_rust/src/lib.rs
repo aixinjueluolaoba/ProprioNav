@@ -481,7 +481,6 @@ pub unsafe extern "C" fn nav_step(
         target_x,
         target_y,
         position_age_ms,
-        None,
         turn_delta_out,
         speed_out,
         jump_out,
@@ -490,7 +489,8 @@ pub unsafe extern "C" fn nav_step(
     )
 }
 
-/// V5 feedback API. Collision is authoritative input from the game.
+/// Macro-output variant: same as `nav_step` plus the V5 recovery macro id.
+/// Collision is always inferred inside the library (same as `nav_step`).
 #[no_mangle]
 pub unsafe extern "C" fn nav_step_feedback(
     nav: *mut c_void,
@@ -499,7 +499,6 @@ pub unsafe extern "C" fn nav_step_feedback(
     target_x: f32,
     target_y: f32,
     position_age_ms: f32,
-    collided: i32,
     turn_delta_out: *mut f32,
     speed_out: *mut f32,
     jump_out: *mut i32,
@@ -513,7 +512,6 @@ pub unsafe extern "C" fn nav_step_feedback(
         target_x,
         target_y,
         position_age_ms,
-        Some(collided != 0),
         turn_delta_out,
         speed_out,
         jump_out,
@@ -529,7 +527,6 @@ unsafe fn nav_step_internal(
     target_x: f32,
     target_y: f32,
     position_age_ms: f32,
-    collided_override: Option<bool>,
     turn_delta_out: *mut f32,
     speed_out: *mut f32,
     jump_out: *mut i32,
@@ -553,7 +550,8 @@ unsafe fn nav_step_internal(
     let age_ms = clamp(position_age_ms, 0.0, MAX_ACCEPTED_AGE_MS);
     let now = Instant::now();
     let macro_enabled = !macro_out.is_null();
-    let mut collided = collided_override.unwrap_or(false);
+    // 碰撞一律由库内推断 (相对自身步幅), 不接受外部标志。
+    let mut collided = false;
     let mut collision_measurement_valid = false;
     let mut displacement = 0.0;
     let mut stalled = false;
@@ -579,11 +577,8 @@ unsafe fn nav_step_internal(
             displacement.max(1.0e-3)
         };
         stalled = displacement < REL_STUCK_RATIO * scale0;
-        if collided_override.is_none() {
-            collided = collision_measurement_valid && displacement < REL_COLLIDE_RATIO * scale0;
-        } else {
-            collision_measurement_valid = age_ms <= state.cfg.stale_ms;
-        }
+        // 被挡 = 有效测量下, 本拍位移不足正常步幅的 30%。
+        collided = collision_measurement_valid && displacement < REL_COLLIDE_RATIO * scale0;
         // 正常移动时更新步幅 EMA (被挡/停住时不更新, 保留真实步幅基准)。
         if collision_measurement_valid && !collided && !stalled {
             state.step_scale = if state.step_scale > 0.0 {

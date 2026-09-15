@@ -11,8 +11,9 @@ deployment library.
 - Neural actions: 7 steering bins and 2 speed bins.
 - Steering: goal-relative offsets in free space, heading-relative offsets during recovery.
 - Jump: collision probe in the SO; the V5 macro model also has a recovery macro head.
-- External step input: current position, target position, position_age_ms
-  (`collided` too for the feedback API).
+- External step input: current position, target position, position_age_ms.
+  Collision is always inferred inside the library; there is no caller-supplied
+  collision flag.
 - External output: relative turn, speed, jump, and the library-maintained
   absolute joystick angle `abs_angle`.
 

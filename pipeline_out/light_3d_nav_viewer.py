@@ -149,7 +149,6 @@ class NativeNavigator:
             ctypes.c_float,
             ctypes.c_float,
             ctypes.c_float,
-            ctypes.c_int,
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_int),
@@ -162,7 +161,7 @@ class NativeNavigator:
         if not self.state:
             raise RuntimeError("nav_init failed")
 
-    def step(self, pos_x: float, pos_z: float, target_x: float, target_z: float, age_ms: float, collided: bool = False):
+    def step(self, pos_x: float, pos_z: float, target_x: float, target_z: float, age_ms: float):
         turn = ctypes.c_float()
         speed = ctypes.c_float()
         jump = ctypes.c_int()
@@ -175,7 +174,6 @@ class NativeNavigator:
             target_x,
             target_z,
             age_ms,
-            int(collided),
             ctypes.byref(turn),
             ctypes.byref(speed),
             ctypes.byref(jump),
@@ -386,7 +384,7 @@ class Viewer(pyglet.window.Window):
                     self.navigator.step(
                         float(observed_logical[0]), float(observed_logical[1]),
                         float(waypoint_logical[0]), float(waypoint_logical[1]),
-                        age, self.last_collision,
+                        age,
                     )
                 )
                 # 库内部维护的绝对摇杆角, 直接用它, 不再自己累加 turn。

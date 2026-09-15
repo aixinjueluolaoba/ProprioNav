@@ -41,9 +41,11 @@ int nav_step(
     float* abs_angle
 );
 
-/* V5 feedback API: the game supplies the authoritative collision flag.
- * The macro output is the currently selected/active recovery macro id.
- * abs_angle has the same meaning as in nav_step and may be NULL.
+/* Macro-output variant of nav_step: identical inputs, plus the currently
+ * active V5 recovery macro id. Collision is always inferred inside the
+ * library (movement-relative to the agent's own step length), exactly as in
+ * nav_step; there is no caller-supplied collision flag.
+ * macro and abs_angle may be NULL to skip those outputs.
  */
 int nav_step_feedback(
     void* nav,
@@ -52,7 +54,6 @@ int nav_step_feedback(
     float target_x,
     float target_y,
     float position_age_ms,
-    int collided,
     float* turn_delta,
     float* speed,
     int* jump,

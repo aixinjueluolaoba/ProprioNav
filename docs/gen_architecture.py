@@ -101,9 +101,9 @@ arrow("h_lib_deploy", X[2]+COLW, 130+2*STEP+H/2, X[3], 130+H/2, "C ABI")
 
 # bottom I/O legend (free text, no boxes)
 text_only("调用方输入", 40, 130+4*STEP+30, 18, "#0f172a")
-text_only("自身坐标 (x,y)  ·  目标/waypoint (x,y)  ·  position_age_ms  ·  (collided)", 40, 130+4*STEP+58, 16, "#334155")
+text_only("自身坐标 (x,y)  ·  目标/waypoint (x,y)  ·  position_age_ms", 40, 130+4*STEP+58, 16, "#334155")
 text_only("库输出", 40, 130+4*STEP+96, 18, "#0f172a")
-text_only("turn_delta (±45°/步)  ·  speed (0-100, 已按新鲜度限速)  ·  jump (0/1)", 40, 130+4*STEP+124, 16, "#334155")
+text_only("turn_delta (±45°/步)  ·  abs_angle (库维护的绝对摇杆角)  ·  speed (0-100, 按新鲜度限速)  ·  jump (0/1)", 40, 130+4*STEP+124, 16, "#334155")
 
 doc = {"type": "excalidraw", "version": 2, "source": "claude-code", "elements": els,
        "appState": {"viewBackgroundColor": "#ffffff"}}
