@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 
+use std::ffi::CStr;
 use std::f32::consts::PI;
 use std::os::raw::{c_char, c_void};
 use std::time::Instant;
@@ -32,19 +33,65 @@ extern "C" {
     fn ncnn_mat_get_data(mat: ncnn_mat_t) -> *mut f32;
 }
 
-// Deployment constants must match the environment the policy was trained in.
-// These are set for the maze/general model (512-cell map, speed scale 30,
-// localisation age up to 800 ms). For another game change these and rebuild.
-const WORLD_SIZE: f32 = 512.0;
+// Default deployment scales (世界尺度/速度/定位年龄). 必须与模型训练环境一致;
+// 运行时可经 `nav_configure` 覆盖, 所以同一份 .so 能服务不同尺度的游戏。
+// 默认值 = V5 (世界 2250, 速度 500, 年龄 500/1000)。hidden 维从模型 param
+// 自动识别 (见 detect_hidden_dim), 不再写死。
+const WORLD_SIZE: f32 = 2250.0;
 const DT: f32 = 0.3;
 const OBS_DIM: i32 = 13;
 const MAX_TURN: f32 = PI / 4.0;
-const MAX_POSITION_AGE_MS: f32 = 800.0;
+const MAX_POSITION_AGE_MS: f32 = 500.0;
 const MAX_ACCEPTED_AGE_MS: f32 = 2000.0;
-const STALE_POSITION_AGE_MS: f32 = 1200.0;
+const STALE_POSITION_AGE_MS: f32 = 1000.0;
 const MIN_SAMPLE_DT: f32 = 0.05;
 const MAX_SAMPLE_DT: f32 = 1.5;
-const MAX_REASONABLE_SPEED: f32 = 30.0;
+const MAX_REASONABLE_SPEED: f32 = 500.0;
+
+/// 每个会话的运行时可配尺度 (nav_configure 可覆盖)。
+#[derive(Clone, Copy)]
+struct NavConfig {
+    world_size: f32,
+    age_max_ms: f32,
+    stale_ms: f32,
+    max_speed: f32,
+}
+
+impl Default for NavConfig {
+    fn default() -> Self {
+        Self {
+            world_size: WORLD_SIZE,
+            age_max_ms: MAX_POSITION_AGE_MS,
+            stale_ms: STALE_POSITION_AGE_MS,
+            max_speed: MAX_REASONABLE_SPEED,
+        }
+    }
+}
+
+/// 从 NCNN param 文本里自动识别 LSTM hidden 维。
+///
+/// 导出图里有 `MemoryData b_hh ... 0=4*hidden`, 故 hidden = 0=/4。
+/// 识别失败时回退到 96。
+fn detect_hidden_dim(param_path: &str) -> usize {
+    if let Ok(text) = std::fs::read_to_string(param_path) {
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            if it.next() == Some("MemoryData") {
+                let _name = it.next();
+                for tok in it {
+                    if let Some(v) = tok.strip_prefix("0=") {
+                        if let Ok(n) = v.parse::<usize>() {
+                            if n % 4 == 0 && n >= 16 {
+                                return n / 4;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    96
+}
 const JUMP_RETRY_COOLDOWN: i32 = 8;
 const RECOVERY_COMMIT_STEPS: i32 = 4;
 // 尺度自校准的“相对阈值”: 用自身近端步幅 (step_scale) 的比例判断移动/卡顿/碰撞,
@@ -127,8 +174,8 @@ pub unsafe extern "C" fn free_net(net: *mut c_void) {
 
 /// Low-level V4 inference.
 ///
-/// Inputs: x[13], h_in[192], c_in[192]
-/// Outputs: steer_logits[7], speed_logits[2], h_out[192], c_out[192]
+/// Inputs: x[13], h_in[hidden], c_in[hidden]
+/// Outputs: steer_logits[7], speed_logits[2], h_out[hidden], c_out[hidden]
 unsafe fn run_inference_impl(
     net: *mut c_void,
     x: *const f32,
@@ -139,6 +186,7 @@ unsafe fn run_inference_impl(
     h_out: *mut f32,
     c_out: *mut f32,
     macro_logits: *mut f32,
+    hidden: usize,
 ) -> i32 {
     if net.is_null() || x.is_null() || h_in.is_null() || c_in.is_null() {
         return -1;
@@ -149,8 +197,8 @@ unsafe fn run_inference_impl(
         return -2;
     }
     let mat_x = ncnn_mat_create_external_1d(OBS_DIM, x as *mut c_void, std::ptr::null_mut());
-    let mat_h = ncnn_mat_create_external_1d(192, h_in as *mut c_void, std::ptr::null_mut());
-    let mat_c = ncnn_mat_create_external_1d(192, c_in as *mut c_void, std::ptr::null_mut());
+    let mat_h = ncnn_mat_create_external_1d(hidden as i32, h_in as *mut c_void, std::ptr::null_mut());
+    let mat_c = ncnn_mat_create_external_1d(hidden as i32, c_in as *mut c_void, std::ptr::null_mut());
     let in0 = b"in0\0".as_ptr() as *const c_char;
     let in1 = b"in1\0".as_ptr() as *const c_char;
     let in2 = b"in2\0".as_ptr() as *const c_char;
@@ -184,10 +232,10 @@ unsafe fn run_inference_impl(
             std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out1), speed_logits, 2);
         }
         if !h_out.is_null() {
-            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out2), h_out, 192);
+            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out2), h_out, hidden);
         }
         if !c_out.is_null() {
-            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out3), c_out, 192);
+            std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out3), c_out, hidden);
         }
         if !macro_logits.is_null() {
             std::ptr::copy_nonoverlapping(ncnn_mat_get_data(mat_out4), macro_logits, 8);
@@ -221,7 +269,7 @@ pub unsafe extern "C" fn run_inference(
 ) -> i32 {
     run_inference_impl(
         net, x, h_in, c_in, steer_logits, speed_logits, h_out, c_out,
-        std::ptr::null_mut(),
+        std::ptr::null_mut(), 96,
     )
 }
 
@@ -239,19 +287,19 @@ pub unsafe extern "C" fn run_inference_macro(
     macro_logits: *mut f32,
 ) -> i32 {
     run_inference_impl(
-        net, x, h_in, c_in, steer_logits, speed_logits, h_out, c_out, macro_logits,
+        net, x, h_in, c_in, steer_logits, speed_logits, h_out, c_out, macro_logits, 96,
     )
 }
 
-fn freshness_scale(age_ms: f32) -> f32 {
+fn freshness_scale(age_ms: f32, stale_ms: f32) -> f32 {
     // Must mirror GPUUnknownHeadingNavEnv._freshness_scale: 1.0 until 200 ms,
     // ramp to 0.5 at 500 ms, then ramp to 0 at the stale threshold.
     if age_ms <= 200.0 {
         1.0
     } else if age_ms <= 500.0 {
         1.0 - 0.5 * ((age_ms - 200.0) / 300.0)
-    } else if age_ms <= STALE_POSITION_AGE_MS {
-        0.5 * ((STALE_POSITION_AGE_MS - age_ms) / (STALE_POSITION_AGE_MS - 500.0))
+    } else if age_ms <= stale_ms {
+        0.5 * ((stale_ms - age_ms) / (stale_ms - 500.0))
     } else {
         0.0
     }
@@ -259,8 +307,10 @@ fn freshness_scale(age_ms: f32) -> f32 {
 
 struct NavState {
     net: ncnn_net_t,
-    h: [f32; 192],
-    c: [f32; 192],
+    hidden: usize,
+    h: Vec<f32>,
+    c: Vec<f32>,
+    cfg: NavConfig,
     first_step: bool,
     old_pos: [f32; 2],
     old_age_ms: f32,
@@ -292,11 +342,13 @@ struct NavState {
 }
 
 impl NavState {
-    fn new(net: ncnn_net_t) -> Self {
+    fn new(net: ncnn_net_t, hidden: usize) -> Self {
         Self {
             net,
-            h: [0.0; 192],
-            c: [0.0; 192],
+            hidden,
+            h: vec![0.0; hidden],
+            c: vec![0.0; hidden],
+            cfg: NavConfig::default(),
             first_step: true,
             old_pos: [0.0; 2],
             old_age_ms: 0.0,
@@ -339,7 +391,45 @@ pub unsafe extern "C" fn nav_init(
     if net.is_null() {
         return std::ptr::null_mut();
     }
-    Box::into_raw(Box::new(NavState::new(net))) as *mut c_void
+    // hidden 维从模型 param 自动识别, 同一 .so 可加载 96 / 192 等不同模型。
+    let hidden = if param_path.is_null() {
+        96
+    } else {
+        match CStr::from_ptr(param_path).to_str() {
+            Ok(p) => detect_hidden_dim(p),
+            Err(_) => 96,
+        }
+    };
+    Box::into_raw(Box::new(NavState::new(net, hidden))) as *mut c_void
+}
+
+/// 运行时可配的游戏尺度 (不重编即可适配不同地图/速度/时延)。
+/// 传 <=0 的字段表示保持默认值不变。
+#[no_mangle]
+pub unsafe extern "C" fn nav_configure(
+    nav: *mut c_void,
+    world_size: f32,
+    age_max_ms: f32,
+    stale_ms: f32,
+    max_speed: f32,
+) -> i32 {
+    if nav.is_null() {
+        return -1;
+    }
+    let state = &mut *(nav as *mut NavState);
+    if world_size > 0.0 {
+        state.cfg.world_size = world_size;
+    }
+    if age_max_ms > 0.0 {
+        state.cfg.age_max_ms = age_max_ms;
+    }
+    if stale_ms > 0.0 {
+        state.cfg.stale_ms = stale_ms;
+    }
+    if max_speed > 0.0 {
+        state.cfg.max_speed = max_speed;
+    }
+    0
 }
 
 #[no_mangle]
@@ -461,7 +551,7 @@ unsafe fn nav_step_internal(
         let moved_y = pos_y - state.old_pos[1];
         displacement = (moved_x * moved_x + moved_y * moved_y).sqrt();
         let sample_time_valid = (MIN_SAMPLE_DT..=MAX_SAMPLE_DT).contains(&sample_dt);
-        collision_measurement_valid = sample_time_valid && age_ms <= STALE_POSITION_AGE_MS;
+        collision_measurement_valid = sample_time_valid && age_ms <= state.cfg.stale_ms;
         // 用自身近端步幅做尺度基准 (冷启动用当前位移 bootstrap)。
         let scale0 = if state.step_scale > 0.0 {
             state.step_scale
@@ -472,7 +562,7 @@ unsafe fn nav_step_internal(
         if collided_override.is_none() {
             collided = collision_measurement_valid && displacement < REL_COLLIDE_RATIO * scale0;
         } else {
-            collision_measurement_valid = age_ms <= STALE_POSITION_AGE_MS;
+            collision_measurement_valid = age_ms <= state.cfg.stale_ms;
         }
         // 正常移动时更新步幅 EMA (被挡/停住时不更新, 保留真实步幅基准)。
         if collision_measurement_valid && !collided && !stalled {
@@ -493,7 +583,7 @@ unsafe fn nav_step_internal(
     };
     let velocity_valid = sample_time_valid
         && (state.step_scale <= 0.0 || displacement >= REL_VALID_RATIO * scale_for_valid)
-        && sample_speed <= MAX_REASONABLE_SPEED;
+        && sample_speed <= state.cfg.max_speed;
     if velocity_valid {
         let mut sample_velocity = [
             (pos_x - state.old_pos[0]) / sample_dt,
@@ -502,8 +592,8 @@ unsafe fn nav_step_internal(
         let sample_norm = (sample_velocity[0] * sample_velocity[0]
             + sample_velocity[1] * sample_velocity[1])
             .sqrt();
-        if sample_norm > MAX_REASONABLE_SPEED {
-            let scale = MAX_REASONABLE_SPEED / sample_norm;
+        if sample_norm > state.cfg.max_speed {
+            let scale = state.cfg.max_speed / sample_norm;
             sample_velocity[0] *= scale;
             sample_velocity[1] *= scale;
         }
@@ -554,7 +644,7 @@ unsafe fn nav_step_internal(
     }
 
     if !state.first_step {
-        let prediction_age = age_ms.min(MAX_POSITION_AGE_MS) / 1000.0;
+        let prediction_age = age_ms.min(state.cfg.age_max_ms) / 1000.0;
         let predicted_x = pos_x + state.velocity[0] * prediction_age;
         let predicted_y = pos_y + state.velocity[1] * prediction_age;
         let predicted_dx = target_x - predicted_x;
@@ -581,9 +671,9 @@ unsafe fn nav_step_internal(
         }
     }
 
-    let prediction_age = age_ms.min(MAX_POSITION_AGE_MS) / 1000.0;
-    let predicted_x = clamp(pos_x + state.velocity[0] * prediction_age, -1100.0, 1100.0);
-    let predicted_y = clamp(pos_y + state.velocity[1] * prediction_age, -1100.0, 1100.0);
+    let prediction_age = age_ms.min(state.cfg.age_max_ms) / 1000.0;
+    let predicted_x = clamp(pos_x + state.velocity[0] * prediction_age, -(state.cfg.world_size * 0.5 + 50.0), state.cfg.world_size * 0.5 + 50.0);
+    let predicted_y = clamp(pos_y + state.velocity[1] * prediction_age, -(state.cfg.world_size * 0.5 + 50.0), state.cfg.world_size * 0.5 + 50.0);
     let dx = target_x - predicted_x;
     let dy = target_y - predicted_y;
     let distance = (dx * dx + dy * dy).sqrt();
@@ -596,17 +686,17 @@ unsafe fn nav_step_internal(
         0.0
     };
     let obs = [
-        clamp(dx / WORLD_SIZE, -1.0, 1.0),
-        clamp(dy / WORLD_SIZE, -1.0, 1.0),
+        clamp(dx / state.cfg.world_size, -1.0, 1.0),
+        clamp(dy / state.cfg.world_size, -1.0, 1.0),
         angle_error.sin(),
         angle_error.cos(),
-        clamp(state.velocity[0] / MAX_REASONABLE_SPEED, -1.0, 1.0),
-        clamp(state.velocity[1] / MAX_REASONABLE_SPEED, -1.0, 1.0),
-        clamp(distance / WORLD_SIZE, 0.0, 1.0),
+        clamp(state.velocity[0] / state.cfg.max_speed, -1.0, 1.0),
+        clamp(state.velocity[1] / state.cfg.max_speed, -1.0, 1.0),
+        clamp(distance / state.cfg.world_size, 0.0, 1.0),
         clamp(state.stuck_time / 3.0, 0.0, 1.0),
         collision_touch,
         jump_probe,
-        clamp(age_ms / MAX_POSITION_AGE_MS, 0.0, 1.0),
+        clamp(age_ms / state.cfg.age_max_ms, 0.0, 1.0),
         state.heading_confidence,
         clamp(state.last_turn_delta / MAX_TURN, -1.0, 1.0),
     ];
@@ -614,9 +704,9 @@ unsafe fn nav_step_internal(
     let mut steer_logits = [0.0; 7];
     let mut speed_logits = [0.0; 2];
     let mut macro_logits = [0.0; 8];
-    let mut h_out = [0.0; 192];
-    let mut c_out = [0.0; 192];
-    let inference_result = run_inference_macro(
+    let mut h_out = vec![0.0f32; state.hidden];
+    let mut c_out = vec![0.0f32; state.hidden];
+    let inference_result = run_inference_impl(
         state.net,
         obs.as_ptr(),
         state.h.as_ptr(),
@@ -626,6 +716,7 @@ unsafe fn nav_step_internal(
         h_out.as_mut_ptr(),
         c_out.as_mut_ptr(),
         if macro_enabled { macro_logits.as_mut_ptr() } else { std::ptr::null_mut() },
+        state.hidden,
     );
     if inference_result != 0 {
         return inference_result;
@@ -697,7 +788,7 @@ unsafe fn nav_step_internal(
     }
 
     let base_speed = if speed_bin == 1 { 100.0 } else { 50.0 };
-    let speed = base_speed * freshness_scale(age_ms);
+    let speed = base_speed * freshness_scale(age_ms, state.cfg.stale_ms);
 
     if !collided {
         state.jump_cooldown = 0;

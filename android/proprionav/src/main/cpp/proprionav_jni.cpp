@@ -56,6 +56,27 @@ Java_com_proprionav_ProprioNav_nativeCreate(
     return to_handle(nav);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_proprionav_ProprioNav_nativeConfigure(
+    JNIEnv* env,
+    jclass,
+    jlong handle,
+    jfloat world_size,
+    jfloat age_max_ms,
+    jfloat stale_ms,
+    jfloat max_speed
+) {
+    void* nav = from_handle(handle);
+    if (nav == nullptr) {
+        throw_illegal_state(env, "ProprioNav session is closed");
+        return;
+    }
+    const int status = nav_configure(nav, world_size, age_max_ms, stale_ms, max_speed);
+    if (status != 0) {
+        throw_illegal_state(env, "nav_configure failed");
+    }
+}
+
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_proprionav_ProprioNav_nativeStep(
     JNIEnv* env,

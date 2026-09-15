@@ -51,6 +51,23 @@ int nav_step_feedback(
     int* macro
 );
 
+/*
+ * Runtime scale configuration. Must match the model's training environment:
+ *   world_size     map extent in game units (e.g. 512 for the maze model)
+ *   age_max_ms     max localisation age (obs normalisation)
+ *   stale_ms       age at which position is treated as stale
+ *   max_speed      max character speed (velocity normalisation)
+ * Passing a value <= 0 keeps the current default for that field.
+ * hidden size is detected automatically from the model param file.
+ */
+int nav_configure(
+    void* nav,
+    float world_size,
+    float age_max_ms,
+    float stale_ms,
+    float max_speed
+);
+
 void nav_free(void* nav);
 
 #ifdef __cplusplus

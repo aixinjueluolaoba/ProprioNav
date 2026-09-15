@@ -39,6 +39,11 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
         private const val ASSET_DIR = "proprionav"
         private const val PARAM = "policy_mixed.param"
         private const val BIN = "policy_mixed.bin"
+        // 与 policy_mixed 训练环境一致的尺度 (迷宫: 世界 512, 年龄 800/1200, 速度 30)。
+        private const val WORLD_SIZE = 512.0f
+        private const val AGE_MAX_MS = 800.0f
+        private const val STALE_MS = 1200.0f
+        private const val MAX_SPEED = 30.0f
 
         init {
             System.loadLibrary("ncnn_rust")
@@ -52,6 +57,7 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
             val bin = copyAsset(context, "$ASSET_DIR/$BIN", File(modelDir, BIN))
             val handle = nativeCreate(param.absolutePath, bin.absolutePath)
             check(handle != 0L) { "Failed to initialize ProprioNav" }
+            nativeConfigure(handle, WORLD_SIZE, AGE_MAX_MS, STALE_MS, MAX_SPEED)
             return ProprioNav(handle)
         }
 
@@ -72,6 +78,15 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
 
         @JvmStatic
         private external fun nativeCreate(paramPath: String, binPath: String): Long
+
+        @JvmStatic
+        private external fun nativeConfigure(
+            handle: Long,
+            worldSize: Float,
+            ageMaxMs: Float,
+            staleMs: Float,
+            maxSpeed: Float,
+        )
 
         @JvmStatic
         private external fun nativeStep(

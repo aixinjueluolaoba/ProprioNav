@@ -102,16 +102,12 @@ cargo build --manifest-path ncnn_rust/Cargo.toml --release
 定位年龄 `position_age_ms`；库内部完成朝向/速度估计、LSTM 状态、freshness 限速。
 输出：`turn_delta`(弧度 ±45°)、`speed`(0–100)、`jump`。
 
-**注意（部署前必读）**：`ncnn_rust/src/lib.rs` 顶部的常量必须与该模型的训练环境一致：
+**通用性（重要）**
 
-```rust
-const WORLD_SIZE: f32 = 512.0;           // 迷宫栅格边长（开放世界 2250）
-const MAX_POSITION_AGE_MS: f32 = 800.0;  // 定位最大年龄
-const STALE_POSITION_AGE_MS: f32 = 1200.0;
-const MAX_REASONABLE_SPEED: f32 = 30.0;  // 速度归一化尺度（迷宫）
-```
-
-hidden 已改为 192；换其它游戏时按该游戏的地图尺度/速度上限改这些常量并重编。
+- **hidden 维自动识别**：`nav_init` 从模型 `.param` 的 `MemoryData b_hh 0=4*hidden` 推断，同一份 `.so` 可加载 hidden 96(V5) 与 192(通用) 的模型，无需重编。
+- **尺度运行时可配**：`nav_configure(nav, world_size, age_max_ms, stale_ms, max_speed)` 覆盖地图尺度/年龄/速度上限（≤0 表示保持默认）。Android 侧 `ProprioNav.fromAssets` 已默认按迷宫尺度（512 / 800 / 1200 / 30）调用。
+- **防转圈内置**：库内用**自身近端步幅的相对阈值**判“移动/卡顿/碰撞”（而非绝对 2.0，慢速游戏不误判），并带**大转向冷却 + 原地不动禁止继续转**，从源头抑制“每步 +45° 原地打转”。
+- 常量默认值对应 V5（世界 2250 / 年龄 500/1000 / 速度 500）；迷宫/通用模型由调用方 `nav_configure` 覆盖成 512 / 800 / 1200 / 30。
 
 ## 已知边界
 

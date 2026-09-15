@@ -40,9 +40,12 @@ deployment library.
   `--maze-overshoot-coef`, `--terminal-slow-radius`, `--position-age-min-ms`.
 - Weights: `policy_weights_mixed.pth` (general), `policy_weights_overshoot.pth`
   (maze, learned approach slowdown). NCNN: `policy_mixed.ncnn.param/bin`.
-- Coordinate-only ABI input stays pos/target/position_age_ms; the C/Rust lib
-  constants (`WORLD_SIZE`, age limits, `MAX_REASONABLE_SPEED`) must match the
-  trained game scale (see `ncnn_rust/src/lib.rs`).
+- Coordinate-only ABI input stays pos/target/position_age_ms. The lib detects
+  the LSTM hidden size from the model `.param` automatically and takes the game
+  scale at runtime via `nav_configure(world_size, age_max_ms, stale_ms, max_speed)`
+  (defaults = V5; the maze AAR configures 512/800/1200/30).
+- Anti-spin is built into the lib: scale-relative motion/stuck/collision
+  thresholds plus turn cooldown / no-turn-while-stationary.
 
 ## Commands
 
