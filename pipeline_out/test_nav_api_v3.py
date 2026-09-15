@@ -135,6 +135,7 @@ def main():
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_float),
     ]
     library.nav_step.restype = ctypes.c_int
     library.nav_free.argtypes = [ctypes.c_void_p]
@@ -170,6 +171,7 @@ def main():
         direction = ctypes.c_float()
         speed = ctypes.c_float()
         jump = ctypes.c_int()
+        abs_angle = ctypes.c_float()
         status = library.nav_step(
             handle,
             float(pos[0]),
@@ -180,6 +182,7 @@ def main():
             ctypes.byref(direction),
             ctypes.byref(speed),
             ctypes.byref(jump),
+            ctypes.byref(abs_angle),
         )
         if status != 0:
             raise RuntimeError(f"nav_step failed at {step}: {status}")

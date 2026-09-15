@@ -223,6 +223,7 @@ def main():
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_float),
         ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_float),
     ]
     library.nav_step.restype = ctypes.c_int
     library.nav_free.argtypes = [ctypes.c_void_p]
@@ -260,6 +261,7 @@ def main():
         turn_delta = ctypes.c_float()
         speed = ctypes.c_float()
         jump = ctypes.c_int()
+        abs_angle = ctypes.c_float()
         status = library.nav_step(
             handle,
             float(pos[0]),
@@ -270,6 +272,7 @@ def main():
             ctypes.byref(turn_delta),
             ctypes.byref(speed),
             ctypes.byref(jump),
+            ctypes.byref(abs_angle),
         )
         if status != 0:
             raise RuntimeError(f"nav_step failed at {step}: {status}")
@@ -283,11 +286,25 @@ def main():
             raise AssertionError(f"turn_delta out of range: {turn_delta.value}")
         if not 0.0 <= speed.value <= 100.0:
             raise AssertionError(f"speed out of range: {speed.value}")
+        if not -3.2 <= abs_angle.value <= 3.2:
+            raise AssertionError(f"abs_angle out of range: {abs_angle.value}")
+        if step == 0:
+            first_abs_angle = abs_angle.value
         jumps += jump.value
+
+    expected_first = math.atan2(500.0, 750.0)
+    if abs(first_abs_angle - expected_first) >= 1e-3:
+        raise AssertionError(
+            f"first abs_angle should be the bearing to target: "
+            f"{first_abs_angle} != {expected_first}"
+        )
 
     library.nav_free(handle)
     library.free_net(low_handle)
-    print(f"40 steps matched; max_turn_diff={max_turn_diff:.6f}; jumps={jumps}")
+    print(
+        f"40 steps matched; max_turn_diff={max_turn_diff:.6f}; jumps={jumps}; "
+        f"first_abs_angle={first_abs_angle:.4f}"
+    )
 
 
 if __name__ == "__main__":

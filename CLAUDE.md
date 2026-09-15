@@ -46,6 +46,11 @@ deployment library.
   (defaults = V5; the maze AAR configures 512/800/1200/30).
 - Anti-spin is built into the lib: scale-relative motion/stuck/collision
   thresholds plus turn cooldown / no-turn-while-stationary.
+- `nav_step` / `nav_step_feedback` also return `abs_angle`: the absolute
+  joystick heading in radians (y-up, 0 = +x/right), maintained inside the lib.
+  It is seeded with the bearing to the target on the first call and then
+  accumulates the policy's relative turns, so callers feed it straight to the
+  joystick and must NOT also accumulate `turn_delta`. Pass NULL to skip it.
 
 ## Commands
 

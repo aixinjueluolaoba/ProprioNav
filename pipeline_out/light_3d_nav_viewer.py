@@ -139,6 +139,7 @@ class NativeNavigator:
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_float),
         ]
         self.library.nav_step.restype = ctypes.c_int
         self.library.nav_step_feedback.argtypes = [
@@ -153,6 +154,7 @@ class NativeNavigator:
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_int),
             ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_float),
         ]
         self.library.nav_step_feedback.restype = ctypes.c_int
         self.library.nav_free.argtypes = [ctypes.c_void_p]
@@ -165,6 +167,7 @@ class NativeNavigator:
         speed = ctypes.c_float()
         jump = ctypes.c_int()
         macro = ctypes.c_int()
+        abs_angle = ctypes.c_float()
         result = self.library.nav_step_feedback(
             self.state,
             pos_x,
@@ -177,10 +180,17 @@ class NativeNavigator:
             ctypes.byref(speed),
             ctypes.byref(jump),
             ctypes.byref(macro),
+            ctypes.byref(abs_angle),
         )
         if result != 0:
             raise RuntimeError(f"nav_step failed: {result}")
-        return float(turn.value), float(speed.value), int(jump.value), int(macro.value)
+        return (
+            float(turn.value),
+            float(speed.value),
+            int(jump.value),
+            int(macro.value),
+            float(abs_angle.value),
+        )
 
     def close(self):
         if self.state:
@@ -372,12 +382,15 @@ class Viewer(pyglet.window.Window):
             observed_logical = observed / WORLD_SCALE
             waypoint_logical = self.route.current / WORLD_SCALE
             try:
-                self.turn, self.speed, self.jump, self.current_macro = self.navigator.step(
-                    float(observed_logical[0]), float(observed_logical[1]),
-                    float(waypoint_logical[0]), float(waypoint_logical[1]),
-                    age, self.last_collision,
+                self.turn, self.speed, self.jump, self.current_macro, abs_angle = (
+                    self.navigator.step(
+                        float(observed_logical[0]), float(observed_logical[1]),
+                        float(waypoint_logical[0]), float(waypoint_logical[1]),
+                        age, self.last_collision,
+                    )
                 )
-                self.heading = math.atan2(math.sin(self.heading + self.turn), math.cos(self.heading + self.turn))
+                # 库内部维护的绝对摇杆角, 直接用它, 不再自己累加 turn。
+                self.heading = abs_angle
                 self.decisions += 1
                 if self.jump and self.vertical == 0.0:
                     self.vertical_velocity = JUMP_VELOCITY

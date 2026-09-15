@@ -97,6 +97,7 @@ Java_com_proprionav_ProprioNav_nativeStep(
     float turn_delta = 0.0F;
     float speed = 0.0F;
     int jump = 0;
+    float abs_angle = 0.0F;
     const int status = nav_step(
         nav,
         pos_x,
@@ -106,7 +107,8 @@ Java_com_proprionav_ProprioNav_nativeStep(
         position_age_ms,
         &turn_delta,
         &speed,
-        &jump
+        &jump,
+        &abs_angle
     );
     if (status != 0) {
         throw_illegal_state(env, "nav_step failed");
@@ -117,10 +119,11 @@ Java_com_proprionav_ProprioNav_nativeStep(
         turn_delta,
         speed,
         static_cast<jfloat>(jump),
+        abs_angle,
     };
-    jfloatArray result = env->NewFloatArray(3);
+    jfloatArray result = env->NewFloatArray(4);
     if (result != nullptr) {
-        env->SetFloatArrayRegion(result, 0, 3, values);
+        env->SetFloatArrayRegion(result, 0, 4, values);
     }
     return result;
 }

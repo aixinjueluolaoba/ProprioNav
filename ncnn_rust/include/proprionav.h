@@ -19,6 +19,12 @@ void* nav_init(const char* param_path, const char* bin_path);
  *                      in radians [-pi/4, pi/4]
  *   speed              freshness-limited recommended speed [0, 100]
  *   jump               0 or 1
+ *   abs_angle          absolute world-frame joystick/movement heading in radians
+ *                      (y-up, 0 = +x/right, pi/2 = +y/up), maintained inside the
+ *                      library and seeded with the bearing to the target on the
+ *                      first call. Feed it straight to the joystick; do NOT also
+ *                      accumulate turn_delta on top of it.
+ *                      May be NULL to skip this output.
  *
  * Returns 0 on success, a negative error code on failure.
  */
@@ -31,11 +37,13 @@ int nav_step(
     float position_age_ms,
     float* turn_delta,
     float* speed,
-    int* jump
+    int* jump,
+    float* abs_angle
 );
 
 /* V5 feedback API: the game supplies the authoritative collision flag.
  * The macro output is the currently selected/active recovery macro id.
+ * abs_angle has the same meaning as in nav_step and may be NULL.
  */
 int nav_step_feedback(
     void* nav,
@@ -48,7 +56,8 @@ int nav_step_feedback(
     float* turn_delta,
     float* speed,
     int* jump,
-    int* macro
+    int* macro,
+    float* abs_angle
 );
 
 /*

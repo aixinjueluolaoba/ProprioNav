@@ -7,6 +7,9 @@ data class NavOutput(
     val turnDelta: Float,
     val speed: Float,
     val jump: Boolean,
+    /** 库内部维护的绝对摇杆角度 (rad, y 向上, 0 = +x/右)。直接用它驱动摇杆,
+     *  不要再把 turnDelta 累加上去。 */
+    val absAngle: Float,
 )
 
 class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
@@ -24,6 +27,7 @@ class ProprioNav private constructor(private var handle: Long) : AutoCloseable {
             turnDelta = values[0],
             speed = values[1],
             jump = values[2] >= 0.5F,
+            absAngle = values[3],
         )
     }
 

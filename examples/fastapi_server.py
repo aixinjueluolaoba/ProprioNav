@@ -52,7 +52,7 @@ lib.nav_step.argtypes = [
     ctypes.c_void_p,
     ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
     ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
-    ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_float),
 ]
 lib.nav_step.restype = ctypes.c_int
 
@@ -78,6 +78,10 @@ class StepResp(BaseModel):
     turn_delta: float = Field(..., description="相对上一运动方向的转角（弧度）")
     speed: float = Field(..., ge=0.0, le=100.0, description="定位新鲜度限速后的速度")
     jump: int = Field(..., ge=0, le=1, description="是否跳跃 0/1")
+    abs_angle: float = Field(
+        ...,
+        description="库内部维护的绝对摇杆角（弧度, y 向上, 0=右）；直接驱动摇杆，不要再累加 turn_delta",
+    )
 
 
 @app.get("/health")
@@ -101,23 +105,30 @@ def nav_init() -> dict:
 
 @app.post("/nav/step", response_model=StepResp)
 def nav_step(req: StepReq) -> StepResp:
-    """单步导航：输入坐标与定位年龄，输出相对转向、速度和跳跃。"""
+    """单步导航：输入坐标与定位年龄，输出相对转向、速度、跳跃与绝对摇杆角。"""
     handle = _sessions.get(req.session_id)
     if handle is None:
         raise HTTPException(status_code=404, detail="无效或已过期的 session_id")
     turn_delta = ctypes.c_float(0.0)
     sp = ctypes.c_float(0.0)
     jump = ctypes.c_int(0)
+    abs_angle = ctypes.c_float(0.0)
     ret = lib.nav_step(
         handle,
         ctypes.c_float(req.pos_x), ctypes.c_float(req.pos_y),
         ctypes.c_float(req.target_x), ctypes.c_float(req.target_y),
         ctypes.c_float(req.position_age_ms),
         ctypes.byref(turn_delta), ctypes.byref(sp), ctypes.byref(jump),
+        ctypes.byref(abs_angle),
     )
     if ret != 0:
         raise HTTPException(status_code=500, detail=f"nav_step 失败：错误码 {ret}")
-    return StepResp(turn_delta=turn_delta.value, speed=sp.value, jump=jump.value)
+    return StepResp(
+        turn_delta=turn_delta.value,
+        speed=sp.value,
+        jump=jump.value,
+        abs_angle=abs_angle.value,
+    )
 
 
 @app.delete("/nav/{session_id}")

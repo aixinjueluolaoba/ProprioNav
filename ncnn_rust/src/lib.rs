@@ -339,6 +339,10 @@ struct NavState {
     macro_left: i32,
     macro_target_heading: f32,
     active_macro: i32,
+    /// 直接喂给摇杆的绝对世界朝向, 由库内部维护 (rad, y 向上, 0 = +x/右)。
+    /// 首次调用用"当前点->目标"的方位角初始化, 之后累加策略的相对转角。
+    joy_heading: f32,
+    joy_heading_valid: bool,
 }
 
 impl NavState {
@@ -377,6 +381,8 @@ impl NavState {
             macro_left: 0,
             macro_target_heading: 0.0,
             active_macro: 0,
+            joy_heading: 0.0,
+            joy_heading_valid: false,
         }
     }
 }
@@ -444,7 +450,16 @@ pub unsafe extern "C" fn nav_free(nav: *mut c_void) {
 /// V4 navigation API without a heading input.
 ///
 /// Inputs: current position, fixed target position, position age in ms.
-/// Outputs: relative turn delta in radians, freshness-limited speed, jump.
+/// Outputs:
+///   turn_delta  relative turn in radians ([-pi/4, pi/4]) from the previous
+///               movement direction, for callers that accumulate it themselves.
+///   abs_angle   absolute world-frame joystick/movement heading in radians
+///               (y-up, 0 = +x/right, pi/2 = +y/up), maintained by the library;
+///               seeded with the bearing to the target on the first call. Feed it
+///               straight to the joystick and do NOT also accumulate turn_delta.
+///   speed       freshness-limited speed [0, 100]
+///   jump        0 or 1
+/// Passing NULL for abs_angle skips that output.
 /// Motion direction, collision, recurrent state, and calibration are internal.
 #[no_mangle]
 pub unsafe extern "C" fn nav_step(
@@ -457,6 +472,7 @@ pub unsafe extern "C" fn nav_step(
     turn_delta_out: *mut f32,
     speed_out: *mut f32,
     jump_out: *mut i32,
+    abs_angle_out: *mut f32,
 ) -> i32 {
     nav_step_internal(
         nav,
@@ -470,6 +486,7 @@ pub unsafe extern "C" fn nav_step(
         speed_out,
         jump_out,
         std::ptr::null_mut(),
+        abs_angle_out,
     )
 }
 
@@ -487,6 +504,7 @@ pub unsafe extern "C" fn nav_step_feedback(
     speed_out: *mut f32,
     jump_out: *mut i32,
     macro_out: *mut i32,
+    abs_angle_out: *mut f32,
 ) -> i32 {
     nav_step_internal(
         nav,
@@ -500,6 +518,7 @@ pub unsafe extern "C" fn nav_step_feedback(
         speed_out,
         jump_out,
         macro_out,
+        abs_angle_out,
     )
 }
 
@@ -515,6 +534,7 @@ unsafe fn nav_step_internal(
     speed_out: *mut f32,
     jump_out: *mut i32,
     macro_out: *mut i32,
+    abs_angle_out: *mut f32,
 ) -> i32 {
     if nav.is_null() || turn_delta_out.is_null() || speed_out.is_null() || jump_out.is_null() {
         return -1;
@@ -803,11 +823,26 @@ unsafe fn nav_step_internal(
         0
     };
 
+    // 绝对摇杆朝向 (库内部维护): 首次调用直接用"当前点->目标"的方位角, 让角色
+    // 起手就朝目标, 免去开头试探; 之后累加策略/脱困给出的相对转角。输出即调用方
+    // 直接写进摇杆的世界绝对角, 调用方不要再自己累加 turn_delta。
+    // 注意种子用**原始两点**算, 不用带预测补偿的 target_angle: 首步速度估计尚未
+    // 可信, 用它会把方位角带偏。
+    if !state.joy_heading_valid {
+        state.joy_heading = normalize_angle((target_y - pos_y).atan2(target_x - pos_x));
+        state.joy_heading_valid = true;
+    } else {
+        state.joy_heading = normalize_angle(state.joy_heading + turn_delta);
+    }
+
     *turn_delta_out = turn_delta;
     *speed_out = speed;
     *jump_out = jump;
     if !macro_out.is_null() {
         *macro_out = state.active_macro;
+    }
+    if !abs_angle_out.is_null() {
+        *abs_angle_out = state.joy_heading;
     }
     state.old_pos = [pos_x, pos_y];
     state.old_age_ms = age_ms;
