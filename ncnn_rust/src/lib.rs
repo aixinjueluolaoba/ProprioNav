@@ -47,6 +47,15 @@ const MAX_SAMPLE_DT: f32 = 1.5;
 const MAX_REASONABLE_SPEED: f32 = 30.0;
 const JUMP_RETRY_COOLDOWN: i32 = 8;
 const RECOVERY_COMMIT_STEPS: i32 = 4;
+// 尺度自校准的“相对阈值”: 用自身近端步幅 (step_scale) 的比例判断移动/卡顿/碰撞,
+// 而不是绝对距离 2.0 —— 这样慢速游戏不会误判卡住。
+const REL_STUCK_RATIO: f32 = 0.15;    // 位移 < 15% 步幅 = 停住
+const REL_VALID_RATIO: f32 = 0.15;    // 位移 >= 15% 步幅才采速度/朝向
+const REL_COLLIDE_RATIO: f32 = 0.30;  // 位移 < 30% 步幅 = 被挡
+// 防转圈: 大转向后锁步数 + 原地不动时禁止继续转。
+const TURN_COOLDOWN_STEPS: i32 = 3;
+const TURN_COOLDOWN_DEG: f32 = 30.0;
+const TURN_MOVE_RATIO: f32 = 0.30;
 const MACRO_TURNS: [f32; 8] = [
     0.0,
     -0.25 * PI,
@@ -271,6 +280,8 @@ struct NavState {
     time_since_collision: f32,
     stuck_time: f32,
     no_progress_time: f32,
+    step_scale: f32,
+    turn_cooldown: i32,
     jump_cooldown: i32,
     recovery_commit_left: i32,
     recovery_phase: i32,
@@ -305,6 +316,8 @@ impl NavState {
             time_since_collision: 10.0,
             stuck_time: 0.0,
             no_progress_time: 0.0,
+            step_scale: 0.0,
+            turn_cooldown: 0,
             jump_cooldown: 0,
             recovery_commit_left: 0,
             recovery_phase: 0,
@@ -433,6 +446,7 @@ unsafe fn nav_step_internal(
     let mut collided = collided_override.unwrap_or(false);
     let mut collision_measurement_valid = false;
     let mut displacement = 0.0;
+    let mut stalled = false;
     let mut sample_dt = DT;
 
     if !state.first_step {
@@ -448,20 +462,37 @@ unsafe fn nav_step_internal(
         displacement = (moved_x * moved_x + moved_y * moved_y).sqrt();
         let sample_time_valid = (MIN_SAMPLE_DT..=MAX_SAMPLE_DT).contains(&sample_dt);
         collision_measurement_valid = sample_time_valid && age_ms <= STALE_POSITION_AGE_MS;
+        // 用自身近端步幅做尺度基准 (冷启动用当前位移 bootstrap)。
+        let scale0 = if state.step_scale > 0.0 {
+            state.step_scale
+        } else {
+            displacement.max(1.0e-3)
+        };
+        stalled = displacement < REL_STUCK_RATIO * scale0;
         if collided_override.is_none() {
-            let expected = state.prev_speed * sample_dt.max(MIN_SAMPLE_DT);
-            collided = expected > 0.0
-                && collision_measurement_valid
-                && displacement < (expected * 0.2).max(2.0);
+            collided = collision_measurement_valid && displacement < REL_COLLIDE_RATIO * scale0;
         } else {
             collision_measurement_valid = age_ms <= STALE_POSITION_AGE_MS;
+        }
+        // 正常移动时更新步幅 EMA (被挡/停住时不更新, 保留真实步幅基准)。
+        if collision_measurement_valid && !collided && !stalled {
+            state.step_scale = if state.step_scale > 0.0 {
+                0.9 * state.step_scale + 0.1 * displacement
+            } else {
+                displacement
+            };
         }
     }
 
     let sample_time_valid = (MIN_SAMPLE_DT..=MAX_SAMPLE_DT).contains(&sample_dt);
     let sample_speed = displacement / sample_dt.max(MIN_SAMPLE_DT);
+    let scale_for_valid = if state.step_scale > 0.0 {
+        state.step_scale
+    } else {
+        displacement
+    };
     let velocity_valid = sample_time_valid
-        && displacement >= 2.0
+        && (state.step_scale <= 0.0 || displacement >= REL_VALID_RATIO * scale_for_valid)
         && sample_speed <= MAX_REASONABLE_SPEED;
     if velocity_valid {
         let mut sample_velocity = [
@@ -537,7 +568,7 @@ unsafe fn nav_step_internal(
             state.time_since_collision + DT
         };
         if collision_measurement_valid {
-            state.stuck_time = if displacement < 2.0 {
+            state.stuck_time = if stalled {
                 state.stuck_time + DT
             } else {
                 0.0
@@ -646,6 +677,25 @@ unsafe fn nav_step_internal(
             state.active_macro = 0;
         }
     }
+    // 防转圈: 非标定/未碰撞/非脱困/无宏锁定时, 给策略转向加"冷却 + 移动门槛",
+    // 避免每步打满 ±45° 原地打转。
+    if !calibrating && !collided && state.recovery_commit_left == 0 && state.active_macro == 0 {
+        let scale = if state.step_scale > 0.0 {
+            state.step_scale
+        } else {
+            f32::INFINITY
+        };
+        let moving = state.first_step || displacement >= TURN_MOVE_RATIO * scale;
+        if state.turn_cooldown > 0 {
+            turn_delta = 0.0;
+            state.turn_cooldown -= 1;
+        } else if !moving {
+            turn_delta = 0.0;
+        } else if turn_delta.abs() >= TURN_COOLDOWN_DEG.to_radians() {
+            state.turn_cooldown = TURN_COOLDOWN_STEPS;
+        }
+    }
+
     let base_speed = if speed_bin == 1 { 100.0 } else { 50.0 };
     let speed = base_speed * freshness_scale(age_ms);
 
