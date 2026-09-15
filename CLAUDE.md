@@ -2,31 +2,35 @@
 
 ## Project
 
-ProprioNav V3 is a recurrent PPO blind-navigation policy with a stateful Rust/NCNN
+ProprioNav is a recurrent PPO blind-navigation policy with a stateful Rust/NCNN
 deployment library.
 
-- Observation: 10 proprioceptive values maintained inside the SO.
-- LSTM hidden size: 96; actor width: 48.
+- Observation: 13 delayed-position values assembled inside the SO.
+- LSTM hidden size: auto-detected from the model `.param` (96 for V5, 192 for the
+  maze/general policy); actor width 48 (V5) / 96 (general).
 - Neural actions: 7 steering bins and 2 speed bins.
 - Steering: goal-relative offsets in free space, heading-relative offsets during recovery.
-- Jump: deterministic collision probe in the SO; there is no deployed jump or macro head.
-- External step input: current position, target position, heading.
-- External output: direction, speed, jump.
+- Jump: collision probe in the SO; the V5 macro model also has a recovery macro head.
+- External step input: current position, target position, position_age_ms
+  (`collided` too for the feedback API).
+- External output: relative turn, speed, jump, and the library-maintained
+  absolute joystick angle `abs_angle`.
 
 ## Important files
 
 - `run_pipeline.py`: GPU-vectorized training and evaluation.
-- `pipeline_out/policy_weights_v3_hybrid_sharp.pth`: canonical V3 PyTorch weights.
-- `pipeline_out/policy.param` and `policy.bin`: canonical FP32 NCNN model.
-- `pipeline_out/export_v3_ncnn.py`: V3 TorchScript exporter.
+- `pipeline_out/policy_weights_mixed.pth` + `pipeline_out/policy_mixed.ncnn.param/bin`:
+  canonical maze/general PyTorch weights and FP32 NCNN model.
+- `pipeline_out/policy_weights_overshoot.pth`: maze weights with learned approach slowdown.
+- `pipeline_out/export_mixed_ncnn.py`: maze/general TorchScript + PNNX exporter.
+- `pipeline_out/delayed_belief.py`: scalar delayed-position belief (reused by the viewer).
 - `ncnn_rust/src/lib.rs`: low-level inference and high-level stateful navigation ABI.
 - `ncnn_rust/include/proprionav.h`: public C header.
 - `scripts/build_android_arm64.sh`: NCNN/Rust Android cross-build.
 - `android/proprionav`: arm64-v8a AAR module with JNI/Kotlin wrapper.
 - `android/sample`: minimal Android integration app.
 - `android/dist`: checked release AAR and sample APK.
-- `pipeline_out/test_inference.py`: low-level parity test.
-- `pipeline_out/test_nav_api.py`: high-level parity test.
+- `pipeline_out/test_nav_api.py`: high-level ABI smoke test (incl. `abs_angle`).
 
 ## Maze / general policy (map_env)
 
@@ -55,15 +59,18 @@ deployment library.
 ## Commands
 
 ```bash
-python pipeline_out/eval_2d_metrics.py \
-  --weights pipeline_out/policy_weights_v3_hybrid_sharp.pth \
-  --action-mode hybrid --hybrid-free-max-deg 10 \
-  --obstacle-signal-mode jump_probe --jump-controller probe
+# Maze / general policy eval (10 concurrent episodes + concat video)
+MPLBACKEND=Agg python run_pipeline.py --eval-only --no-play \
+  --maze-grid map_env/maze_grid.npz --maze-target-range 0.25 \
+  --weights-name policy_weights_mixed.pth \
+  --hidden-dim 192 --actor-width 96 --eval-episodes 10 --eval-sample \
+  --position-age-min-ms 200 --position-age-max-ms 800 \
+  --position-stale-ms 1200 --position-age-extreme-prob 0.3
 
 RUSTFLAGS="-C linker=/usr/bin/gcc" cargo build \
   --manifest-path ncnn_rust/Cargo.toml --release
+cp ncnn_rust/target/release/libncnn_rust.so pipeline_out/
 
-python pipeline_out/test_inference.py
 python pipeline_out/test_nav_api.py
 
 ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125" \

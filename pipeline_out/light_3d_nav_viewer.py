@@ -21,7 +21,7 @@ BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 sys.path.insert(0, str(BASE / "pipeline_out"))
 from run_pipeline import RecurrentActorCritic  # noqa: E402
-from test_miniworld_v4 import DelayedPositionBelief  # noqa: E402
+from delayed_belief import DelayedPositionBelief  # noqa: E402
 
 WORLD_SIZE = 2250.0
 WORLD_SCALE = 10.0

@@ -1,8 +1,8 @@
 """Export the maze / mixed (coordinate-only) policy for PNNX/NCNN deployment.
 
-Same single-step LSTM inference graph as ``export_v4_ncnn.py`` but supports the
-larger hidden size (192) and any speed-bin count, so the general maze+open-world
-policy can be shipped through the existing ``nav_step`` C ABI.
+Single-step LSTM inference graph with a configurable hidden size (96 legacy /
+192 general) and speed-bin count, so the maze+open-world policy can be shipped
+through the ``nav_step`` / ``nav_step_feedback`` C ABI.
 """
 
 from __future__ import annotations

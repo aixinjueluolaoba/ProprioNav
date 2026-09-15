@@ -16,20 +16,16 @@ pipeline_out/*.png
 pipeline_out/*.log
 pipeline_out/*.jsonl
 
-# 只提交当前 V3 权重和 NCNN 模型
+# 权重: 默认忽略训练中间产物, 只保留部署用的几个 (见下方 ! 规则)
 pipeline_out/policy_weights.pth
 pipeline_out/policy_weights_*.pth
-!pipeline_out/policy_weights_v3_hybrid_sharp.pth
 pipeline_out/policy.onnx
 pipeline_out/policy_cleaned.onnx
 pipeline_out/policy.pt
-pipeline_out/policy.bin
-!pipeline_out/policy.bin
 pipeline_out/*.so
 pipeline_out/policy.*.bin
 pipeline_out/policy.*.param
 pipeline_out/policy.*.onnx
-pipeline_out/policy_v3*
 
 # NCNN 编译源码与构建树
 pipeline_out/ncnn_source/

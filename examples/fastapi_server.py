@@ -31,8 +31,14 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parent.parent
 PIPELINE = ROOT / "pipeline_out"
 SO_PATH = PIPELINE / "libncnn_rust.so"
-PARAM_PATH = PIPELINE / "policy.param"
-BIN_PATH = PIPELINE / "policy.bin"
+# 当前部署模型：迷宫/通用纯坐标策略 (hidden 192)。
+PARAM_PATH = PIPELINE / "policy_mixed.ncnn.param"
+BIN_PATH = PIPELINE / "policy_mixed.ncnn.bin"
+# 与 policy_mixed 训练环境一致的尺度 (迷宫: 世界 512, 年龄 800/1200, 速度 30)。
+WORLD_SIZE = 512.0
+AGE_MAX_MS = 800.0
+STALE_MS = 1200.0
+MAX_SPEED = 30.0
 
 if not SO_PATH.exists():
     raise RuntimeError(
@@ -56,10 +62,16 @@ lib.nav_step.argtypes = [
 ]
 lib.nav_step.restype = ctypes.c_int
 
+lib.nav_configure.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+]
+lib.nav_configure.restype = ctypes.c_int
+
 lib.nav_free.argtypes = [ctypes.c_void_p]
 lib.nav_free.restype = None
 
-app = FastAPI(title="ProprioNav Nav API", version="3.0")
+app = FastAPI(title="ProprioNav Nav API", version="5.0")
 
 # ── 会话存储：session_id -> nav 句柄（c_void_p）──
 _sessions: dict[str, object] = {}
@@ -98,6 +110,10 @@ def nav_init() -> dict:
     )
     if not handle:
         raise HTTPException(status_code=500, detail="nav_init 失败：模型加载错误")
+    ret = lib.nav_configure(handle, WORLD_SIZE, AGE_MAX_MS, STALE_MS, MAX_SPEED)
+    if ret != 0:
+        lib.nav_free(handle)
+        raise HTTPException(status_code=500, detail=f"nav_configure 失败：错误码 {ret}")
     sid = uuid.uuid4().hex
     _sessions[sid] = handle
     return {"session_id": sid}
