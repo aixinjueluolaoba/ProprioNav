@@ -15,6 +15,12 @@ extern "C" {
     fn ncnn_net_destroy(net: ncnn_net_t);
     fn ncnn_net_load_param(net: ncnn_net_t, path: *const c_char) -> i32;
     fn ncnn_net_load_model(net: ncnn_net_t, path: *const c_char) -> i32;
+    // 内存版入口（ncnn c_api: ncnn_net_load_param_memory / ncnn_net_load_model_memory）。
+    // 策略模型文件不在时用编进库里的那份走这里，不碰文件系统。
+    // param 吃 .param 文本（C 字符串），model 吃 .bin 原始字节，返回消费掉的字节数
+    // （底层 Net::load_model(mem) 失败时不推进指针，故 0 表示加载失败）。
+    fn ncnn_net_load_param_memory(net: ncnn_net_t, mem: *const c_char) -> i32;
+    fn ncnn_net_load_model_memory(net: ncnn_net_t, mem: *const c_void) -> usize;
     fn ncnn_extractor_create(net: ncnn_net_t) -> ncnn_extractor_t;
     fn ncnn_extractor_destroy(ex: ncnn_extractor_t);
     fn ncnn_extractor_input(ex: ncnn_extractor_t, name: *const c_char, mat: ncnn_mat_t) -> i32;
@@ -68,22 +74,27 @@ impl Default for NavConfig {
     }
 }
 
+/// 内置的策略模型（V5 macro fast，与 pipeline_out 下的同名文件一致，md5 见
+/// ncnn_rust/assets/README.md）。调用方给的 param/bin 路径读不到文件时用这份，
+/// 走 ncnn 的内存加载；文件存在时依旧优先用文件，接口与行为不变。
+const EMBEDDED_POLICY_PARAM: &[u8] =
+    include_bytes!("../assets/policy_v5_macro_fast.param");
+const EMBEDDED_POLICY_BIN: &[u8] = include_bytes!("../assets/policy_v5_macro_fast.bin");
+
 /// 从 NCNN param 文本里自动识别 LSTM hidden 维。
 ///
 /// 导出图里有 `MemoryData b_hh ... 0=4*hidden`, 故 hidden = 0=/4。
 /// 识别失败时回退到 96。
-fn detect_hidden_dim(param_path: &str) -> usize {
-    if let Ok(text) = std::fs::read_to_string(param_path) {
-        for line in text.lines() {
-            let mut it = line.split_whitespace();
-            if it.next() == Some("MemoryData") {
-                let _name = it.next();
-                for tok in it {
-                    if let Some(v) = tok.strip_prefix("0=") {
-                        if let Ok(n) = v.parse::<usize>() {
-                            if n % 4 == 0 && n >= 16 {
-                                return n / 4;
-                            }
+fn detect_hidden_dim_text(text: &str) -> usize {
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        if it.next() == Some("MemoryData") {
+            let _name = it.next();
+            for tok in it {
+                if let Some(v) = tok.strip_prefix("0=") {
+                    if let Ok(n) = v.parse::<usize>() {
+                        if n % 4 == 0 && n >= 16 {
+                            return n / 4;
                         }
                     }
                 }
@@ -91,6 +102,22 @@ fn detect_hidden_dim(param_path: &str) -> usize {
         }
     }
     96
+}
+
+/// 优先按调用方给的 param 路径识别；文件读不到（没给路径 / 路径不存在）时
+/// 用内置 param 文本识别，保证内置模型也能拿到正确的 hidden 维。
+fn detect_hidden_dim(param_path: *const c_char) -> usize {
+    if !param_path.is_null() {
+        if let Ok(p) = unsafe { CStr::from_ptr(param_path) }.to_str() {
+            if let Ok(text) = std::fs::read_to_string(p) {
+                return detect_hidden_dim_text(&text);
+            }
+        }
+    }
+    match std::str::from_utf8(EMBEDDED_POLICY_PARAM) {
+        Ok(text) => detect_hidden_dim_text(text),
+        Err(_) => 96,
+    }
 }
 const JUMP_RETRY_COOLDOWN: i32 = 8;
 const RECOVERY_COMMIT_STEPS: i32 = 4;
@@ -151,14 +178,40 @@ pub unsafe extern "C" fn init_net(
     param_path: *const c_char,
     bin_path: *const c_char,
 ) -> *mut c_void {
-    if param_path.is_null() || bin_path.is_null() {
-        return std::ptr::null_mut();
+    // 1) 调用方给了路径且文件能读 → 用文件（与原版行为一致）。
+    if !param_path.is_null() && !bin_path.is_null() {
+        let net = ncnn_net_create();
+        if net.is_null() {
+            return std::ptr::null_mut();
+        }
+        if ncnn_net_load_param(net, param_path) == 0
+            && ncnn_net_load_model(net, bin_path) == 0
+        {
+            return net;
+        }
+        // 文件坏了/不存在：销毁重来，改走内置模型（半加载的 net 不能复用）。
+        ncnn_net_destroy(net);
     }
+    // 2) 回退：库内置策略模型，内存加载，不碰文件系统。
+    load_embedded_net()
+}
+
+/// 用编进库里的策略模型建一个 net（ncnn 内存加载）。
+/// 失败返回空指针；成功等价于从文件加载同一个模型。
+unsafe fn load_embedded_net() -> *mut c_void {
     let net = ncnn_net_create();
     if net.is_null() {
         return std::ptr::null_mut();
     }
-    if ncnn_net_load_param(net, param_path) != 0 || ncnn_net_load_model(net, bin_path) != 0 {
+    // load_param_mem 吃 C 字符串，include_bytes! 来的文本没有结尾 NUL，补一个。
+    let mut param = Vec::with_capacity(EMBEDDED_POLICY_PARAM.len() + 1);
+    param.extend_from_slice(EMBEDDED_POLICY_PARAM);
+    param.push(0);
+    if ncnn_net_load_param_memory(net, param.as_ptr() as *const c_char) != 0 {
+        ncnn_net_destroy(net);
+        return std::ptr::null_mut();
+    }
+    if ncnn_net_load_model_memory(net, EMBEDDED_POLICY_BIN.as_ptr() as *const c_void) == 0 {
         ncnn_net_destroy(net);
         return std::ptr::null_mut();
     }
@@ -398,14 +451,8 @@ pub unsafe extern "C" fn nav_init(
         return std::ptr::null_mut();
     }
     // hidden 维从模型 param 自动识别, 同一 .so 可加载 96 / 192 等不同模型。
-    let hidden = if param_path.is_null() {
-        96
-    } else {
-        match CStr::from_ptr(param_path).to_str() {
-            Ok(p) => detect_hidden_dim(p),
-            Err(_) => 96,
-        }
-    };
+    // param 文件读不到时用内置 param 文本识别（走内置模型的情形）。
+    let hidden = detect_hidden_dim(param_path);
     Box::into_raw(Box::new(NavState::new(net, hidden))) as *mut c_void
 }
 
