@@ -130,6 +130,10 @@ const REL_COLLIDE_RATIO: f32 = 0.30;  // 位移 < 30% 步幅 = 被挡
 const TURN_COOLDOWN_STEPS: i32 = 3;
 const TURN_COOLDOWN_DEG: f32 = 30.0;
 const TURN_MOVE_RATIO: f32 = 0.30;
+/// 朝向安全包络: 转向后的朝向与目标方位角的最大偏差。
+/// 60° 时即使一直贴着包络走, 朝目标的分量仍有 cos60°=0.5 → 距离单调下降, 收敛;
+/// 同时留出足够空间让策略做正常避障转向。
+const HEADING_ENVELOPE: f32 = 60.0 * PI / 180.0;
 const MACRO_TURNS: [f32; 8] = [
     0.0,
     -0.25 * PI,
@@ -847,6 +851,25 @@ unsafe fn nav_step_internal(
         } else if turn_delta.abs() >= TURN_COOLDOWN_DEG.to_radians() {
             state.turn_cooldown = TURN_COOLDOWN_STEPS;
         }
+    }
+
+    // 朝向安全包络: 普通策略转向(非标定/未被挡/非脱困/无宏)时, 限制"转向后的朝向"
+    // 与"目标方位角"的偏差不超过 HEADING_ENVELOPE。
+    //
+    // 为什么需要: 上面的冷却只保证"转一次大角后锁 3 步", 但**方向不受约束** ——
+    // 策略连续选同向 ±45° 时, "转 45°→直冲 3 步→再转 45°" 恰好是一条定曲率折线,
+    // 实测画出半径 25–48 的圆(绕圈中心还偏在目标外 76–110), 永远进不了到达圈,
+    // 12 段路线里最后 4 段吃掉 62% 的步数、两段 ABORT。
+    //
+    // 包络内不动策略输出(正常避障照旧); 已跑飞时用最大转角拉回目标方位角。
+    let blocked = collided || state.time_since_collision < 0.9;
+    if !calibrating && !blocked && state.recovery_commit_left == 0 && state.active_macro == 0 {
+        let desired = normalize_angle(target_angle - state.joy_heading);
+        turn_delta = if desired.abs() > HEADING_ENVELOPE {
+            clamp(desired, -MAX_TURN, MAX_TURN)
+        } else {
+            clamp(turn_delta, desired - HEADING_ENVELOPE, desired + HEADING_ENVELOPE)
+        };
     }
 
     let base_speed = if speed_bin == 1 { 100.0 } else { 50.0 };
